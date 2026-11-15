@@ -39,8 +39,9 @@ src/engine/            Pure TypeScript. No DOM, no Phaser, no model calls.
   grid.ts              Breadth-first pathfinding
 src/maps/              talley.ts (three floors), campus.ts (road plan), index.ts
 src/agents/            gateway.ts (client), runtime.ts (prompts), schema.ts, fallback.ts, filter.ts
-src/game/              Phaser scene, canvas tile renderer, actors
-src/ui/                DOM overlay: HUD, dialogue, phone, menus, character creation
+src/core.ts            Current GameState, event bus, local save
+src/game/              scene.ts (movement, agents, crowd, prompts), render.ts (maps and people drawn on canvas)
+src/ui/                DOM overlay: actions.ts (E-key handling, overnight flow), hud, dialogue, phone, screens, dom helpers
 tests/                 Vitest
 ```
 
@@ -65,6 +66,9 @@ default. The proxy picks a provider in this order: `LLM_PROVIDER` if set, else G
 `GROQ_API_KEY` is set, else OpenRouter if `OPENROUTER_API_KEY` is set, else scripted
 mode. Two tiers are used: `small` for dialogue, `large` for nightly reflection and the
 director. Model names are set per tier in `.env.local`.
+
+In dev builds, `window.__sim` exposes `{ ctx, bus, game }` for debugging and browser
+smoke tests (teleport by setting `ctx.state.mapId/x/y`, then `bus.emit('map')`).
 
 ## Known gaps
 

@@ -130,6 +130,16 @@ export function buildCampus(): GameMap {
   b.fill(76, 54, 6, 6, 'field'); b.label(79, 57, B.dailSoftball, 'zone');
   b.fill(83, 54, 7, 6, 'field'); b.label(86.5, 57, B.dailSoccer, 'zone');
 
+  // Things to do outdoors
+  b.interact('class', 14, 15, 8, 6, `${B.dabney}: CH 101`, 'ch101');
+  b.interact('study', 37, 7, 14, 5, B.dhhill, 'library');
+  b.interact('venue', 12, 47, 7, 5, B.fountain, 'fountain');
+  b.interact('venue', 76, 47, 7, 5, B.clark, 'clark');
+  b.interact('venue', 79, 36, 8, 5, B.caseDining, 'case');
+  b.interact('venue', 14, 0, 10, 3, N.hillsboroughVenues[1], 'brickline');
+  b.interact('venue', 38, 0, 10, 3, N.hillsboroughVenues[3], 'nightowl');
+  b.interact('closed', 77, 11, 7, 7, B.poe);
+
   // Bus stops
   for (const [id, s] of Object.entries(BUS_STOPS)) {
     b.set(s.x, s.y, 'sidewalk');
@@ -149,7 +159,7 @@ export function buildCampus(): GameMap {
   b.label(50, 68.5, `To ${N.place.centennial} by ${N.bus.name} — a later phase`, 'note');
 
   // Agent spots
-  b.spot('c.dorm', 50, 47);
+  b.spot('c.dorm', 52, 46);
   b.spot('c.rec', 35, 46);
   b.spot('c.brickyard', 44, 16);
   for (const [x, y] of [[40, 15], [48, 18], [44, 14], [50, 16], [38, 19], [47, 23], [47, 26], [44, 29], [50, 42], [42, 42],

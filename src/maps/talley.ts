@@ -101,7 +101,7 @@ function floor1(): GameMap {
   b.label(12, 39, 'Lounge', 'zone');
 
   // Booths along the south glass
-  for (let i = 0; i < 6; i++) b.booth(`f1.s${i + 1}`, 43 + i * 3, 40);
+  for (let i = 0; i < 6; i++) b.booth(`f1.s${i + 1}`, 43 + i * 3, 40, i !== 5);
   b.label(52, 37.5, 'Booths', 'zone');
 
   return b.build();

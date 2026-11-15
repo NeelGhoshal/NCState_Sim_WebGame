@@ -20,7 +20,7 @@ export const isObj = (t: Ground | Obj): t is Obj => OBJ_NAMES.has(t);
 
 export interface Pt { x: number; y: number }
 
-export type InteractKind = 'venue' | 'booth' | 'bus' | 'sleep' | 'tunnel' | 'wolfears' | 'info' | 'closed';
+export type InteractKind = 'venue' | 'booth' | 'bus' | 'sleep' | 'tunnel' | 'wolfears' | 'info' | 'closed' | 'class' | 'study';
 
 export interface Interactable {
   id: string;

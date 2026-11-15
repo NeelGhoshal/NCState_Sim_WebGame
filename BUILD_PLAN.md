@@ -29,8 +29,13 @@ and the road plan were asked for up front.
 - [x] Local save in browser storage
 - [x] Token and call counter, to replace the blueprint's 125,000-tokens-per-episode estimate with a measurement
 
+Verified so far: 47 unit tests (map reachability, engine rules, output validation), and a
+headless-browser smoke run covering walking, the Talley doors and stairs, a model-written
+conversation through local Ollama, the phone and the overnight flow.
+
 **Gate 0:** Is a three-day loop in Talley fun with real model output? Play it five times
-with a key set. Write down the measured calls and tokens per episode.
+with a key set. Write down the measured calls and tokens per episode (phone → System, and
+the end screen).
 
 ## Phase 1 — Make the agents worth talking to
 
