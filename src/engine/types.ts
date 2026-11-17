@@ -1,4 +1,5 @@
 // Tile and map types. Each cell has a ground tile and an optional object on top.
+import type { RoadNet } from './roads';
 
 export type Ground =
   | 'void' | 'grass' | 'sidewalk' | 'plaza' | 'roadH' | 'roadV' | 'roadX' | 'crosswalk'
@@ -82,6 +83,8 @@ export interface GameMap {
   vectors?: MapVectors;
   /** Data credit shown while on this map. */
   credit?: string;
+  /** Streets, signals and crosswalks, on maps with traffic. */
+  roads?: RoadNet;
 }
 
 export function isSolid(map: GameMap, x: number, y: number): boolean {

@@ -3,8 +3,24 @@
 // drawn in chunks: lawn tiles first, then smooth areas, streets, paths and the railroad, then
 // building outlines in brick, then labels. Collision still uses the tile grid.
 import type { BuildingMeta, BuildingStyle, GameMap, Ground, MapArea, MapLine, Obj } from '../engine/types';
+import type { RoadNet } from '../engine/roads';
 
 export const TS = 32;
+
+/** A canvas on the main thread, or an OffscreenCanvas inside the map worker. */
+export type AnyCanvas = HTMLCanvasElement | OffscreenCanvas;
+
+/** CPU-backed canvases: they become WebGL textures, and reading a GPU canvas back for the
+ * upload costs 50-150 ms per chunk. */
+export function makeCanvas(w: number, h: number): { canvas: AnyCanvas; c: CanvasRenderingContext2D } {
+  if (typeof document === 'undefined') {
+    const canvas = new OffscreenCanvas(w, h);
+    return { canvas, c: canvas.getContext('2d', { willReadFrequently: true }) as unknown as CanvasRenderingContext2D };
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  return { canvas, c: canvas.getContext('2d', { willReadFrequently: true })! };
+}
 
 const GROUND: Record<Ground, string> = {
   void: '#111317', grass: '#6b9b52', sidewalk: '#d3ccbc', plaza: '#a65a45', roadH: '#4a4b51', roadV: '#4a4b51',
@@ -254,6 +270,38 @@ function outlinedText(c: CanvasRenderingContext2D, text: string, x: number, y: n
   c.lineWidth = 3; c.strokeStyle = stroke; c.strokeText(text, x, y); c.fillStyle = fill; c.fillText(text, x, y);
 }
 
+// ---------------------------------------------------------------- lawn texture
+
+let lawn: AnyCanvas | null = null;
+
+/** A 256 px tile of mown grass: soft light and dark patches, then fine blades. Built once. */
+function lawnTile(): AnyCanvas {
+  if (lawn) return lawn;
+  const N = 256;
+  const { canvas, c } = makeCanvas(N, N);
+  let seed = 7;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  c.fillStyle = GROUND.grass; c.fillRect(0, 0, N, N);
+  // Patches, drawn wrapped so the tile repeats without a seam
+  const blob = (x: number, y: number, r: number, col: string) => {
+    for (const ox of [-N, 0, N]) for (const oy of [-N, 0, N]) {
+      const g = c.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r);
+      g.addColorStop(0, col); g.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = g; c.fillRect(x + ox - r, y + oy - r, r * 2, r * 2);
+    }
+  };
+  for (let i = 0; i < 14; i++) blob(rnd() * N, rnd() * N, 30 + rnd() * 50, rnd() > 0.5 ? 'rgba(150,190,90,0.10)' : 'rgba(40,70,25,0.10)');
+  // Blades
+  for (let i = 0; i < 1400; i++) {
+    const x = rnd() * N, y = rnd() * N, len = 2 + rnd() * 3;
+    c.strokeStyle = rnd() > 0.5 ? 'rgba(160,200,110,0.22)' : 'rgba(35,65,25,0.22)';
+    c.lineWidth = 1;
+    c.beginPath(); c.moveTo(x, y); c.lineTo(x + (rnd() - 0.5) * 1.5, y - len); c.stroke();
+  }
+  lawn = canvas;
+  return canvas;
+}
+
 // ---------------------------------------------------------------- vector maps
 
 interface Box { x0: number; y0: number; x1: number; y1: number }
@@ -423,6 +471,35 @@ function drawLines(c: CanvasRenderingContext2D, ls: Prepared['lines'], overview:
   c.setLineDash([]);
 }
 
+/** Zebra crosswalks and stop lines at signalized junctions. */
+function drawRoadMarks(c: CanvasRenderingContext2D, net: RoadNet, view: Box) {
+  const near = (x: number, y: number) => x >= view.x0 && x <= view.x1 && y >= view.y0 && y <= view.y1;
+  c.setLineDash([]);
+  c.lineCap = 'butt';
+  c.strokeStyle = '#f1f1ec';
+  for (const k of net.crossings) {
+    if (!near(k.x0, k.y0)) continue;
+    // Bars run along the street, spaced across it
+    const dx = k.x1 - k.x0, dy = k.y1 - k.y0, len = Math.hypot(dx, dy);
+    c.lineWidth = 0.17 * TS;
+    c.beginPath();
+    for (let s = 0.18; s < len - 0.1; s += 0.36) {
+      const x = k.x0 + (dx / len) * s, y = k.y0 + (dy / len) * s;
+      c.moveTo((x - k.tx * 0.42) * TS, (y - k.ty * 0.42) * TS);
+      c.lineTo((x + k.tx * 0.42) * TS, (y + k.ty * 0.42) * TS);
+    }
+    c.stroke();
+  }
+  c.lineWidth = 0.14 * TS;
+  c.beginPath();
+  for (const l of net.stopLines) {
+    if (!near(l.x0, l.y0)) continue;
+    c.moveTo(l.x0 * TS, l.y0 * TS); c.lineTo(l.x1 * TS, l.y1 * TS);
+  }
+  c.stroke();
+  c.lineCap = 'round';
+}
+
 /** Air handlers and stair housings on big roofs: small boxes with their own south face. */
 function drawRooftop(c: CanvasRenderingContext2D, m: PBuilding) {
   if (!m.poly || m.style === 'parking' || m.style === 'closed') return;
@@ -553,11 +630,8 @@ function drawBuildingLabel(c: CanvasRenderingContext2D, m: PBuilding, scale: num
  * Draws part of a map: `w` x `h` tiles from (x0, y0), at `scale` canvas pixels per world pixel.
  * Features that cross the edge are drawn whole and clipped, so neighbouring chunks line up.
  */
-export function renderRegion(map: GameMap, x0: number, y0: number, w: number, h: number, scale = 1): HTMLCanvasElement {
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.ceil(w * TS * scale);
-  canvas.height = Math.ceil(h * TS * scale);
-  const c = canvas.getContext('2d')!;
+export function renderRegion(map: GameMap, x0: number, y0: number, w: number, h: number, scale = 1): AnyCanvas {
+  const { canvas, c } = makeCanvas(Math.ceil(w * TS * scale), Math.ceil(h * TS * scale));
   c.scale(scale, scale);
   c.translate(-x0 * TS, -y0 * TS);
   const overview = scale < 0.5;
@@ -587,7 +661,11 @@ export function renderRegion(map: GameMap, x0: number, y0: number, w: number, h:
   const view: Box = { x0: x0 - pad, y0: y0 - pad, x1: x0 + w + pad, y1: y0 + h + pad };
 
   if (overview) { c.fillStyle = GROUND.grass; c.fillRect(x0 * TS, y0 * TS, w * TS, h * TS); }
-  else tiles((x, y) => drawGround(c, 'grass', x, y, map));
+  else {
+    // The pattern is anchored to world coordinates, so neighbouring chunks continue it seamlessly.
+    c.fillStyle = c.createPattern(lawnTile() as CanvasImageSource, 'repeat')!;
+    c.fillRect(x0 * TS, y0 * TS, w * TS, h * TS);
+  }
 
   for (const a of P.areas) {
     if (!hits(a.b, view) || !AREA_FILL[a.k]) continue;
@@ -607,6 +685,7 @@ export function renderRegion(map: GameMap, x0: number, y0: number, w: number, h:
     else if (a.k === 'water') { c.strokeStyle = '#3c6f9c'; c.lineWidth = 2; c.stroke(); }
   }
   drawLines(c, P.lines.filter((l) => hits(l.b, view)), overview);
+  if (!overview && map.roads) drawRoadMarks(c, map.roads, view);
 
   // Roofs rise above the footprint, so look a little further south for buildings that reach in.
   const tall: Box = { ...view, y1: view.y1 + MAX_HEIGHT_PX / TS };
@@ -634,8 +713,33 @@ export function renderRegion(map: GameMap, x0: number, y0: number, w: number, h:
   return canvas;
 }
 
+/**
+ * Walkable tiles a person would be hidden behind a building on (its raised walls and roof
+ * reach over them). 1 = covered. The scene draws people there see-through.
+ */
+export function roofCover(map: GameMap): Uint8Array {
+  const mask = new Uint8Array(map.w * map.h);
+  if (!map.vectors) return mask;
+  for (const m of prepare(map).buildings) {
+    if (!m.poly || m.h < 4) continue;
+    const ht = m.h / TS;
+    const x0 = Math.max(0, Math.floor(m.b.x0)), x1 = Math.min(map.w - 1, Math.ceil(m.b.x1));
+    const y0 = Math.max(0, Math.floor(m.b.y0 - ht)), y1 = Math.min(map.h - 1, Math.ceil(m.b.y1));
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const i = y * map.w + x;
+      if (mask[i] || map.ground[i] === 'bldg') continue;
+      // The figure's head is about 0.4 tile above its tile centre; the building hides it when
+      // a point of the head sits in front of the lifted footprint.
+      for (let k = 0.2; k <= ht; k += 0.2) {
+        if (insidePoly(x + 0.5, y + 0.15 + k, m.poly)) { mask[i] = 1; break; }
+      }
+    }
+  }
+  return mask;
+}
+
 /** The whole map in one canvas. Used for interiors, which are small. */
-export function renderMap(map: GameMap): HTMLCanvasElement {
+export function renderMap(map: GameMap): AnyCanvas {
   return renderRegion(map, 0, 0, map.w, map.h, 1);
 }
 
@@ -757,5 +861,102 @@ export function renderTag(text: string, accent: string): HTMLCanvasElement {
   c.fillStyle = 'rgba(22,22,28,0.82)'; c.beginPath(); c.roundRect(0.5, 0.5, w - 1, h - 1, 8); c.fill();
   c.fillStyle = accent; c.beginPath(); c.arc(8, h / 2, 2.5, 0, Math.PI * 2); c.fill();
   c.font = font; c.fillStyle = '#f4f1ea'; c.textBaseline = 'middle'; c.fillText(text, 13, h / 2 + 0.5);
+  return cv;
+}
+
+// ---------------------------------------------------------------- vehicles and signals
+// Drawn once each on the main thread and reused as textures. Vehicles face east (+x); the scene
+// rotates them. Sizes are in world pixels.
+
+export const CAR_PALETTE = ['#c0392b', '#2c3e50', '#ecf0f1', '#7f8c8d', '#2471a3', '#1e8449', '#f0b429', '#1b1b1f'];
+
+function vehicleCanvas(w: number, h: number) {
+  const cv = document.createElement('canvas');
+  cv.width = w + 4; cv.height = h + 4;
+  const c = cv.getContext('2d')!;
+  c.translate(2, 2);
+  return { cv, c };
+}
+
+/** A car seen from above, 1.7 x 0.9 tiles. Brake lights glow when `braking`. */
+export function renderCar(color: string, braking: boolean): HTMLCanvasElement {
+  const w = Math.round(1.7 * TS), h = Math.round(0.9 * TS);
+  const { cv, c } = vehicleCanvas(w, h);
+  c.fillStyle = 'rgba(0,0,0,0.28)'; c.beginPath(); c.roundRect(2, 3, w - 2, h - 2, 7); c.fill();
+  c.fillStyle = color; c.strokeStyle = INK; c.lineWidth = 1.5;
+  c.beginPath(); c.roundRect(0, 0, w - 2, h - 2, 7); c.fill(); c.stroke();
+  // Windscreen, rear window, roof
+  c.fillStyle = 'rgba(30,40,55,0.85)';
+  c.beginPath(); c.roundRect(w * 0.58, 3, w * 0.16, h - 8, 3); c.fill();
+  c.beginPath(); c.roundRect(w * 0.14, 4, w * 0.12, h - 10, 3); c.fill();
+  c.fillStyle = shade(color, 18); c.beginPath(); c.roundRect(w * 0.28, 4, w * 0.28, h - 10, 3); c.fill();
+  // Headlights and tail lights
+  c.fillStyle = '#fff6c8'; c.fillRect(w - 5, 2, 3, 4); c.fillRect(w - 5, h - 8, 3, 4);
+  c.fillStyle = braking ? '#ff2a2a' : '#8a1c1c';
+  c.fillRect(0, 2, 3, 5); c.fillRect(0, h - 9, 3, 5);
+  if (braking) {
+    c.fillStyle = 'rgba(255,40,40,0.35)';
+    c.beginPath(); c.arc(0, 4, 5, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(0, h - 6, 5, 0, Math.PI * 2); c.fill();
+  }
+  return cv;
+}
+
+/** The Wolfline bus, 2.8 x 1.05 tiles, red with a white band. */
+export function renderBus(braking: boolean): HTMLCanvasElement {
+  const w = Math.round(2.8 * TS), h = Math.round(1.05 * TS);
+  const { cv, c } = vehicleCanvas(w, h);
+  c.fillStyle = 'rgba(0,0,0,0.3)'; c.beginPath(); c.roundRect(3, 4, w - 3, h - 3, 6); c.fill();
+  c.fillStyle = '#cc0000'; c.strokeStyle = INK; c.lineWidth = 1.5;
+  c.beginPath(); c.roundRect(0, 0, w - 2, h - 2, 6); c.fill(); c.stroke();
+  c.fillStyle = '#f4f1ea'; c.fillRect(6, h / 2 - 5, w - 18, 8);
+  c.fillStyle = '#9b0000'; c.font = `bold 7px ${LABEL_FONT}`; c.textBaseline = 'middle'; c.textAlign = 'center';
+  c.fillText('WOLFLINE', w / 2 - 4, h / 2 - 1);
+  c.fillStyle = 'rgba(30,40,55,0.85)'; c.fillRect(w - 11, 3, 5, h - 8);
+  c.fillStyle = 'rgba(255,255,255,0.25)'; c.fillRect(w * 0.22, 2, 10, 3); c.fillRect(w * 0.55, 2, 10, 3);
+  c.fillStyle = '#fff6c8'; c.fillRect(w - 5, 2, 3, 5); c.fillRect(w - 5, h - 9, 3, 5);
+  c.fillStyle = braking ? '#ff2a2a' : '#8a1c1c'; c.fillRect(0, 2, 3, 6); c.fillRect(0, h - 10, 3, 6);
+  return cv;
+}
+
+/** A traffic light on a short pole. */
+export function renderCarSignal(light: 'green' | 'yellow' | 'red'): HTMLCanvasElement {
+  const cv = document.createElement('canvas');
+  cv.width = 12; cv.height = 30;
+  const c = cv.getContext('2d')!;
+  c.fillStyle = '#2b2b2b'; c.fillRect(5, 22, 2, 8);
+  c.fillStyle = '#1c1c1c'; c.strokeStyle = '#000'; c.lineWidth = 1;
+  c.beginPath(); c.roundRect(1, 0, 10, 24, 3); c.fill(); c.stroke();
+  const lamp = (y: number, on: boolean, col: string) => {
+    if (on) { c.fillStyle = col + '55'; c.beginPath(); c.arc(6, y, 4.5, 0, Math.PI * 2); c.fill(); }
+    c.fillStyle = on ? col : 'rgba(255,255,255,0.08)'; c.beginPath(); c.arc(6, y, 2.8, 0, Math.PI * 2); c.fill();
+  };
+  lamp(5, light === 'red', '#ff3b30'); lamp(12, light === 'yellow', '#ffcc00'); lamp(19, light === 'green', '#34c759');
+  return cv;
+}
+
+/** A pedestrian signal: a walking figure, a raised hand, or the countdown number. */
+export function renderWalkHead(walk: boolean, count: number): HTMLCanvasElement {
+  const cv = document.createElement('canvas');
+  cv.width = 18; cv.height = 18;
+  const c = cv.getContext('2d')!;
+  c.fillStyle = '#151515'; c.strokeStyle = '#000'; c.lineWidth = 1;
+  c.beginPath(); c.roundRect(0.5, 0.5, 17, 17, 3); c.fill(); c.stroke();
+  if (walk) {
+    c.fillStyle = '#f4f4f0'; c.strokeStyle = '#f4f4f0'; c.lineWidth = 1.8; c.lineCap = 'round';
+    c.beginPath(); c.arc(9.5, 4, 1.8, 0, Math.PI * 2); c.fill();
+    c.beginPath();
+    c.moveTo(9, 6.5); c.lineTo(8.5, 11); c.lineTo(6, 15); c.moveTo(8.5, 11); c.lineTo(11, 15);
+    c.moveTo(9, 8); c.lineTo(6.5, 10); c.moveTo(9, 8); c.lineTo(12, 9.5);
+    c.stroke();
+  } else if (count > 0) {
+    c.fillStyle = '#ff8a1e'; c.font = `bold 12px ${LABEL_FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(String(count), 9, 9.5);
+  } else {
+    c.fillStyle = '#ff8a1e';
+    c.beginPath(); c.roundRect(5, 7, 8, 7, 2); c.fill();
+    for (let i = 0; i < 4; i++) c.fillRect(5 + i * 2.1, 3.5, 1.6, 5);
+    c.fillRect(3, 8, 3, 1.6);
+  }
   return cv;
 }

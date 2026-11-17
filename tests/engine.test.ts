@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { newGame, type GameState, WAKE, PLAYER_CLASS, validTraits } from '../src/engine/state';
 import {
   advance, buy, study, sleep, attendClass, spendExchange, talkCheck, applyAgentTurn, respondInvite,
-  busWait, rideBus, allowedActions, walkTime,
+  busRunning, boardBus, leaveBus, passTime, struckByCar, allowedActions, walkTime,
 } from '../src/engine/engine';
 import { MAPS } from '../src/maps/index';
+import { BUS_STOPS } from '../src/maps/campus';
 
 const traits = { athletics: 4, academics: 5, charisma: 5, creativity: 3, discipline: 5, streetSmarts: 4 };
 const fresh = (): GameState => newGame({ name: 'Test', pronouns: 'they/them', traits: { ...traits }, budget: 'steady' });
@@ -153,15 +154,37 @@ describe('engine', () => {
     expect(allowedActions(s, 'jordan').argsFor.invite).toEqual(['jordan_build']);
   });
 
-  it('the bus waits for the next departure and moves you', () => {
-    expect(busWait(8 * 60)).toBe(0);
-    expect(busWait(8 * 60 + 3)).toBe(5);
+  it('the bus runs 7 AM to 10 PM; boarding needs service, leaving moves you and checks the bucket', () => {
+    expect(busRunning(6 * 60 + 59)).toBe(false);
+    expect(busRunning(7 * 60)).toBe(true);
+    expect(busRunning(22 * 60)).toBe(false);
     const s = fresh();
-    s.minute = 8 * 60 + 3;
-    const r = rideBus(s, 'talley', 'belltower');
+    s.minute = 23 * 60;
+    expect(boardBus(s, 'talley').ok).toBe(false);
+    s.minute = 9 * 60;
+    expect(boardBus(s, 'talley').ok).toBe(true);
+    const r = leaveBus(s, 'belltower');
     expect(r.ok).toBe(true);
-    expect(s.minute).toBe(8 * 60 + 3 + 5 + 8); // two stops on the loop: talley, fountain, belltower
+    expect({ x: s.x, y: s.y }).toEqual({ x: BUS_STOPS.belltower.x, y: BUS_STOPS.belltower.y });
     expect(s.bucket.wolfline).toBe(true);
+  });
+
+  it('riding passes time without costing energy', () => {
+    const s = fresh(), still = fresh(), walked = fresh();
+    passTime(s, 2.5);
+    advance(still, 2);
+    walkTime(walked, 2.5);
+    expect(s.minute).toBe(still.minute);
+    expect(s.energy).toBe(still.energy);
+    expect(walked.energy).toBeLessThan(s.energy);
+  });
+
+  it('a car costs time, energy and stress, more stress against the signal', () => {
+    const a = fresh(), b = fresh();
+    struckByCar(a, true); struckByCar(b, false);
+    expect(a.minute).toBe(b.minute);
+    expect(a.energy).toBeLessThan(fresh().energy);
+    expect(a.stress).toBeGreaterThan(b.stress);
   });
 
   it('staying up to 2 AM triggers a pass-out event', () => {

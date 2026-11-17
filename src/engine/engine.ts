@@ -3,6 +3,7 @@
 import { AGENTS, AGENT_BY_ID, ALL_INVITES, FACTS, INVITE_OWNER, type InviteDef } from '../data/agents';
 import { VENUES, DINING_HALLS, type MenuItem, type Venue } from '../data/venues';
 import { MAPS } from '../maps/index';
+import { N } from '../data/names';
 import { BUS_STOPS } from '../maps/campus';
 import { agentWhere } from './schedule';
 import { type GameState, DAY_END, DAYS, WAKE, PLAYER_CLASS, BUCKET } from './state';
@@ -15,7 +16,13 @@ export { type Ev, type Result, addMemory, changeRel, clamp, logEvent } from './u
 
 export const EXCHANGE_MIN = 5;
 export const TALK_RANGE = 2;
-export const BUS = { interval: 8, ride: 4, first: 7 * 60, last: 22 * 60, order: ['talley', 'fountain', 'belltower', 'quad'] };
+/**
+ * Wolfline service hours. The bus itself drives the street network in src/game/traffic.ts.
+ * `rideRate`: game minutes that pass per minute of walking-pace clock while riding. The bus is
+ * drawn at a speed that reads well on screen, but it covers ground faster than walking, so a ride
+ * costs less time than the screen time suggests.
+ */
+export const BUS = { first: 7 * 60, last: 22 * 60, rideRate: 0.4 };
 
 const fail = (msg: string): Result => ({ ok: false, msg, events: [] });
 
@@ -246,32 +253,55 @@ export function whisperEars(s: GameState): Result {
   return { ok: true, msg: 'You whisper into the Wolf Ears. Somewhere across the lawn, someone laughs.', events };
 }
 
-export function busWait(minute: number): number {
-  if (minute < BUS.first) return BUS.first - minute;
-  const r = minute % BUS.interval;
-  return r === 0 ? 0 : BUS.interval - r;
+export function busRunning(minute: number): boolean {
+  const m = ((minute % 1440) + 1440) % 1440;
+  return m >= BUS.first && m < BUS.last;
 }
 
-export function busOptions(s: GameState, from: string) {
-  const i = BUS.order.indexOf(from);
-  const wait = busWait(s.minute);
-  return BUS.order.filter((id) => id !== from).map((id) => {
-    const hops = (BUS.order.indexOf(id) - i + BUS.order.length) % BUS.order.length;
-    return { id, name: BUS_STOPS[id].name, wait, ride: hops * BUS.ride, available: s.minute + wait <= BUS.last };
-  });
+/** Time that passes without walking: waiting at a stop, riding the bus. No energy cost. */
+export function passTime(s: GameState, minutes: number): Ev[] {
+  s.walkFrac += minutes;
+  const whole = Math.floor(s.walkFrac);
+  if (whole <= 0) return [];
+  s.walkFrac -= whole;
+  return advance(s, whole);
 }
 
-export function rideBus(s: GameState, from: string, to: string): Result {
-  const opt = busOptions(s, from).find((o) => o.id === to);
-  if (!opt) return fail('That stop is not on this route.');
-  if (!opt.available) return fail(`No more buses tonight. Service ends at ${fmtTime(BUS.last)}.`);
-  const events = advance(s, opt.wait + opt.ride);
-  const stop = BUS_STOPS[to];
+export function boardBus(s: GameState, from: string): Result {
+  if (!busRunning(s.minute)) return fail(`No more buses tonight. Service runs ${fmtTime(BUS.first)} to ${fmtTime(BUS.last)}.`);
+  const stop = BUS_STOPS[from];
+  if (!stop) return fail('That is not a Wolfline stop.');
+  logEvent(s, `Caught the Wolfline at ${stop.name}`);
+  return { ok: true, msg: `You board the ${N.bus.name}. It's free. Press E at a stop to get off.`, events: [] };
+}
+
+export function leaveBus(s: GameState, at: string): Result {
+  const stop = BUS_STOPS[at];
+  if (!stop) return fail('The bus does not stop here.');
+  const events: Ev[] = [];
   s.mapId = 'campus';
   s.x = stop.x; s.y = stop.y;
   completeBucket(s, 'wolfline', events);
   logEvent(s, `Rode the Wolfline to ${stop.name}`);
-  return { ok: true, msg: `Waited ${opt.wait} min, rode ${opt.ride} min to ${stop.name}.`, events };
+  return { ok: true, msg: `You step off at ${stop.name}.`, events };
+}
+
+/**
+ * A car clipped you. `againstSignal` is true when you were crossing on Don't Walk or away from a
+ * crosswalk. Costs a few minutes, some energy, and a jolt of stress.
+ */
+export function struckByCar(s: GameState, againstSignal: boolean): Result {
+  const events = advance(s, 4);
+  s.energy = clamp(s.energy - 6, 0, 100);
+  s.stress = clamp(s.stress + (againstSignal ? 12 : 8), 0, 100);
+  logEvent(s, againstSignal ? 'Got clipped by a car crossing against the signal' : 'Got clipped by a car');
+  return {
+    ok: false,
+    msg: againstSignal
+      ? 'A car clips you as you step out. You limp back to the curb, shaken. Wait for the walk signal.'
+      : 'A car clips you. You limp back to the curb, shaken.',
+    events,
+  };
 }
 
 // ---------------------------------------------------------------- conversations

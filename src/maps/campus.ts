@@ -6,6 +6,7 @@
 // Map data © OpenStreetMap contributors, ODbL.
 import { MapBuilder, polyArea, polyBounds } from '../engine/mapBuilder';
 import { reachable } from '../engine/grid';
+import { buildRoadNet, projectToNet, routeBetween, type NetPoint, type RouteStep } from '../engine/roads';
 import type { BuildingMeta, BuildingStyle, GameMap, Ground, MapLine, Pt } from '../engine/types';
 import { isSolid } from '../engine/types';
 import { N } from '../data/names';
@@ -32,8 +33,12 @@ export function geo(lat: number, lon: number): Pt {
   };
 }
 
-export interface BusStop { name: string; x: number; y: number }
+export interface BusStop { name: string; x: number; y: number; /** Where the bus pulls in. */ at: NetPoint }
 export const BUS_STOPS: Record<string, BusStop> = {};
+/** The Wolfline loop, stop by stop. */
+export const BUS_ORDER = ['talley', 'fountain', 'belltower', 'quad'];
+/** The loop as driving steps on the campus street network; each leg ends at a stop. */
+export const BUS_ROUTE: RouteStep[] = [];
 
 /** Outside tiles of Talley's doors, where the interior's exits land. */
 export const TALLEY_EXITS = { north: { x: 0, y: 0 }, south: { x: 0, y: 0 } };
@@ -260,24 +265,31 @@ export function buildCampus(): GameMap {
   const rec = entrance(B.carmichael, { x: center(B.carmichael).x, y: 0 });
   b.spot('c.rec', rec.out.x, rec.out.y);
 
-  // ---- Bus stops, on the curb nearest each landmark
-  const roadNear = (p: Pt) => {
-    let best: string | undefined, bd = Infinity;
-    for (const l of lines) if (l.name && ROAD_R[l.k] && l.k !== 'service') for (let i = 0; i < l.p.length; i += 2) {
-      const d = (l.p[i] - p.x) ** 2 + (l.p[i + 1] - p.y) ** 2;
-      if (d < bd) { bd = d; best = l.name; }
-    }
-    return best ? shortRoad(best) : 'Campus';
+  // ---- Bus stops: on the kerb of the street nearest each landmark, on the landmark's side
+  const net = buildRoadNet(D.lines, W, H);
+  const onMap = (e: { p: number[] }) => e.p.every((v, i) => (i % 2 ? v > 2 && v < H - 2 : v > 2 && v < W - 2));
+  const stops: Record<string, [string, string]> = {
+    talley: [B.talley, 'Talley'], fountain: [B.fountain, 'Fountain'], belltower: [B.belltower, 'the Belltower'], quad: ['Quad Commons', 'the Quad'],
   };
-  for (const [id, bldg, where] of [
-    ['talley', B.talley, 'Talley'], ['quad', 'Quad Commons', 'the Quad'],
-    ['fountain', B.fountain, 'Fountain'], ['belltower', B.belltower, 'the Belltower'],
-  ] as const) {
-    const s = nearest(center(bldg), nearRoad, 60);
+  for (const id of BUS_ORDER) {
+    const [bldg, where] = stops[id];
+    const c = center(bldg);
+    const np = projectToNet(net, c, onMap);
+    const e = net.edges[np.edge];
+    const d = Math.hypot(c.x - np.x, c.y - np.y) || 1;
+    const toward = { x: Math.round(np.x + ((c.x - np.x) / d) * (e.half + 1.2)), y: Math.round(np.y + ((c.y - np.y) / d) * (e.half + 1.2)) };
+    const s = nearest(toward, nearRoad, 30);
     b.set(s.x, s.y, 'busstop');
-    BUS_STOPS[id] = { name: `${roadNear(s)} at ${where}`, x: s.x, y: s.y };
+    BUS_STOPS[id] = { name: `${e.name ? shortRoad(e.name) : 'Campus'} at ${where}`, x: s.x, y: s.y, at: projectToNet(net, s, onMap) };
     b.interact('bus', s.x, s.y, 1, 1, `${N.bus.name} stop: ${BUS_STOPS[id].name}`, id);
   }
+  BUS_ORDER.forEach((id, i) => {
+    const to = BUS_ORDER[(i + 1) % BUS_ORDER.length];
+    const leg = routeBetween(net, BUS_STOPS[id].at, BUS_STOPS[to].at);
+    if (!leg?.length) throw new Error(`campus: no street route from the ${id} stop to the ${to} stop`);
+    leg[leg.length - 1].stop = to;
+    BUS_ROUTE.push(...leg);
+  });
 
   // ---- Trees on open lawn, clear of paths and doors
   for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) {
@@ -319,6 +331,7 @@ export function buildCampus(): GameMap {
   // ---- Spawn outside your hall, and crowd spots on the paths you can reach from it
   const map = b.build();
   map.spawn = { ...tucker.out };
+  map.roads = net;
   const reach = reachable(map, map.spawn);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const g = map.ground[y * W + x];

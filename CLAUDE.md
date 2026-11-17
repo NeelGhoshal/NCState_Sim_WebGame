@@ -63,6 +63,7 @@ src/data/agents.ts           Persona cards, schedules, invitations, scripted lin
 src/engine/                  Pure TypeScript. No DOM, no Phaser, no network.
   state.ts, engine.ts        GameState; clock, meters, actions, dialogue rules, invitations, sleep
   schedule.ts, grid.ts       Agent locations by time; pathfinding
+  roads.ts                   Street graph from OSM centrelines: junctions, signals, crosswalks, routes (the Wolfline loop)
   rumors.ts                  Who knows which fact; gossip between co-located characters; telling
   memory.ts                  Which memories a character brings to a conversation
   util.ts                    clamp, memories, relationships, and `chance` (stable hash; the engine's only randomness)
@@ -71,7 +72,9 @@ src/maps/                    talley.ts (three floors), campus.ts (OSM campus + d
 src/agents/                  runtime.ts (builds snapshots, calls the service), gateway.ts (fetch),
                              schema.ts (second validation), fallback.ts (scripted lines), filter.ts
 src/core.ts                  Current GameState, event bus, local save
-src/game/                    scene.ts (movement, agents, crowd, prompts), render.ts (canvas drawing)
+src/game/                    scene.ts (movement, agents, crowd, prompts, chunk streaming, bus riding), render.ts (canvas drawing),
+                             traffic.ts (cars, buses and signal timing; pure TS, only simulates cars near the camera),
+                             mapWorker.ts + mapRenderer.ts (map drawing off the main thread, ImageBitmap uploads)
 src/ui/                      DOM overlay: actions.ts (E-key handling, overnight flow), hud, dialogue, phone, screens
 tests/                       Vitest
 ```
@@ -88,7 +91,9 @@ tests/                       Vitest
   them in `src/`, and never commit `.env.local`.
 - Every model call has a timeout and a scripted fallback in `src/agents/fallback.ts`. The
   game must stay fully playable with the AI service stopped.
-- Model calls are async and never block the frame loop.
+- Model calls are async and never block the frame loop. So does map drawing: chunks, backdrops and the
+  roof-cover mask come from the map worker. Keep `render.ts` free of `document` in the map path
+  (use `makeCanvas`), since it runs in the worker too.
 - Interiors are built in code; the campus is generated from OpenStreetMap at 5 m per tile.
   After changing a map or regenerating the data, run `npm test`: it checks that every
   portal, schedule spot and interactable can be reached on foot, and that the major

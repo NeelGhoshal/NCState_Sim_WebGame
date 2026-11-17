@@ -2,11 +2,11 @@
 import { ctx, bus, save } from '../core';
 import { AGENTS } from '../data/agents';
 import { VENUES } from '../data/venues';
-import { BUS_STOPS } from '../maps/campus';
+import { BUS_STOPS, BUS_ORDER } from '../maps/campus';
 import type { Interactable } from '../engine/types';
 import {
   type Ev, type Result, buy, itemPrice, venueOpen, fmtTime, fmtMoney, study, rest, wait, classStatus, attendClass,
-  paintTunnel, whisperEars, busOptions, rideBus, hoursOfSleep, sleep, applyReflection, agentHere,
+  paintTunnel, whisperEars, busRunning, BUS, hoursOfSleep, sleep, applyReflection, agentHere,
 } from '../engine/engine';
 import { PLAYER_CLASS } from '../engine/state';
 import { reflect, directorRecap, directorEpilogue } from '../agents/runtime';
@@ -92,14 +92,20 @@ function venueMenu(id: string) {
     }));
 }
 
+/** Set by the scene: when the next bus reaches a stop, as text ("in about 3 min"). */
+let busEta: (stop: string) => string = () => '';
+export function setBusEta(fn: (stop: string) => string) { busEta = fn; }
+
 function busMenu(from: string) {
   const s = ctx.state!;
-  menu(`Wolfline stop: ${BUS_STOPS[from].name}`, 'Free. The schematic loop runs every 8 minutes, 7 AM to 10 PM.',
-    busOptions(s, from).map((o) => ({
-      label: o.name, detail: `wait ${o.wait} min + ride ${o.ride} min`,
-      disabled: o.available ? false : 'No more buses tonight',
-      onClick: () => { after(rideBus(s, from, o.id)); bus.emit('map'); },
-    })));
+  const route = BUS_ORDER.map((id) => BUS_STOPS[id].name.split(' at ')[1]).join(' → ');
+  const running = busRunning(s.minute);
+  menu(`Wolfline stop: ${BUS_STOPS[from].name}`,
+    `Free. The loop runs ${route}, ${fmtTime(BUS.first)} to ${fmtTime(BUS.last)}. Wait at the sign; when the bus pulls in and opens its doors, press E to board.`,
+    [{
+      label: 'Wait for the bus', detail: running ? `next bus ${busEta(from) || 'soon'}` : '',
+      disabled: running ? false : 'No more buses tonight', onClick: () => {},
+    }]);
 }
 
 function sleepMenu() {
