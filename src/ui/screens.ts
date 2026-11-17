@@ -30,9 +30,10 @@ export function closeScreen() {
 
 function modelLine(): string {
   const st = llmStatus();
-  return st.configured
-    ? `<span class="chip ok">AI on · ${esc(st.provider!)} · ${esc(st.models!.small)} / ${esc(st.models!.large)}</span>`
-    : '<span class="chip">Scripted mode · add a free Groq key in <code>.env.local</code> for AI characters</span>';
+  if (st.configured) return `<span class="chip ok">AI on · ${esc(st.provider!)} · ${esc(st.models!.small)} / ${esc(st.models!.large)}</span>`;
+  return st.server
+    ? '<span class="chip">Scripted mode · AI service is running but has no key. Add a free Groq key to <code>.env.local</code></span>'
+    : '<span class="chip">Scripted mode · AI service not running. Start everything with <code>npm run dev</code></span>';
 }
 
 export function showTitle() {

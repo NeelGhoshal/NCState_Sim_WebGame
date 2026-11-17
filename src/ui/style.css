@@ -28,6 +28,8 @@ code { font-family: ui-monospace, monospace; background: rgba(255,255,255,0.08);
 /* HUD */
 #hud { position: absolute; inset: 12px 12px auto 12px; display: flex; justify-content: space-between; align-items: flex-start; pointer-events: none; }
 #hud > * { pointer-events: auto; }
+.map-credit { position: fixed; right: 8px; bottom: 6px; font-size: 11px; color: #f2efe6; background: rgba(20,20,24,0.6); padding: 2px 6px; border-radius: 4px; text-decoration: none; }
+.map-credit:hover, .map-credit:focus-visible { text-decoration: underline; }
 .hud-main { width: 270px; padding: 10px 12px; }
 .clock { display: flex; justify-content: space-between; align-items: baseline; }
 .clock b { font-size: 22px; }

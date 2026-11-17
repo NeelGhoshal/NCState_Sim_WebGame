@@ -20,7 +20,8 @@ and the road plan were asked for up front.
 - [x] Agent parts: persona card, schedule, goals, memory, relationship, knowledge boundary
 - [x] Fixed action list, JSON output checked against a schema, scripted fallback
 - [x] LLM gateway in the OpenAI chat format: Groq, OpenRouter or local Ollama
-- [x] Dev-server proxy so API keys never reach browser code
+- [x] AI side moved to a Python FastAPI service (`ai/`): prompts, validation, model calls, keys
+- [x] Vite proxies `/api` to the AI service, so API keys never reach browser code
 - [x] Conversations that cost 5 minutes per exchange, with social battery and schedule limits
 - [x] Invitations: agents invite, the engine tracks attended and missed
 - [x] Phone: schedule, texts, feed, bank, bucket list, time skip
@@ -29,7 +30,8 @@ and the road plan were asked for up front.
 - [x] Local save in browser storage
 - [x] Token and call counter, to replace the blueprint's 125,000-tokens-per-episode estimate with a measurement
 
-Verified so far: 47 unit tests (map reachability, engine rules, output validation), and a
+Verified so far: 47 TypeScript tests (map reachability, engine rules, output validation), 15 Python
+tests (validation, provider selection, endpoints with a fake model), and a
 headless-browser smoke run covering walking, the Talley doors and stairs, a model-written
 conversation through local Ollama, the phone and the overnight flow.
 
@@ -43,6 +45,7 @@ the end screen).
 - [ ] Persuasion with history: extension and shift-swap requests, capped by the engine
 - [ ] Group decisions offscreen: a club vote settled by several agents
 - [ ] Agent-written texts (now scripted) and agent-initiated favors
+- [x] Campus knowledge retrieval: sourced cards, per-character topics, daily NC State events and news (`ai/app/rag/`)
 - [ ] Importance-scored memory retrieval instead of "last eight memories"
 - [ ] Routing thresholds between the small and large model, taken from the LLM Cost Router results
 - [ ] Saved-session replay as a regression test for agent behavior
@@ -53,7 +56,7 @@ applied across 20 recorded sessions.
 
 ## Phase 2 — Real map and Central Campus
 
-- [ ] Replace the schematic campus with footprints generated from OpenStreetMap (credit OSM, publish the data file)
+- [x] Replace the schematic campus with footprints generated from OpenStreetMap (credit OSM, publish the data file)
 - [ ] Tiled editor pipeline for interiors; move Talley from code to Tiled maps
 - [ ] Correct Talley against the real floor plans (the current layout is from memory)
 - [ ] Residence hall interior with the roommate; one dining hall with meal swipes

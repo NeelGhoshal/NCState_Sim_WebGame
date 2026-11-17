@@ -4,75 +4,129 @@ A 2D top-down browser game. The player is a student; the people around them are 
 agents with schedules, memories and goals. Time is the scarce resource. See
 `BUILD_PLAN.md` for phases and gates.
 
+Two parts:
+- **Game client** — TypeScript, Phaser 3, Vite. Owns all game state and rules.
+- **AI service** — Python, FastAPI, in `ai/`. Builds prompts, calls the model, validates
+  output, holds API keys. Stateless.
+
 ## Commands
 
 ```
-npm run dev        # game at http://localhost:5173, with the LLM proxy
-npm test           # Vitest: engine rules, map validity, agent schema
+npm run dev        # starts the AI service (port 8000) and the game (http://localhost:5173)
+npm run dev:web    # game only (scripted mode unless the AI service is running)
+npm run dev:ai     # AI service only, with auto-reload
+npm test           # Vitest: engine rules, map validity, output validation
+npm run test:ai    # pytest: AI service validation, provider selection, endpoints
 npm run typecheck  # tsc --noEmit
 npm run build      # typecheck, then a static build in dist/
+npm run map:osm    # re-download OpenStreetMap data and rebuild src/data/campusOsm.json
+npm run rag:update # collect today's NC State events and news into ai/data/daily/
+npm run rag:static # rebuild background cards (campus places; Wikipedia if RAG_CONTACT is set)
 ```
+
+First-time Python setup: `python -m venv ai/.venv` then
+`ai/.venv/Scripts/pip install -r ai/requirements.txt` (`bin/pip` on macOS/Linux).
 
 ## The one design rule
 
-**Numbers decide, agents narrate.** The rules engine owns time, money, stats,
+**Numbers decide, agents narrate.** The TypeScript rules engine owns time, money, stats,
 relationships and invitations. A model only picks one action from a fixed list and
-writes the words. Nothing a model returns is applied until `validateTurn` has checked it
-and the engine has accepted it.
+writes the words. Nothing a model returns is applied until it has been validated twice
+(in `ai/app/validate.py`, then `src/agents/schema.ts`) and accepted by the engine.
 
 When adding a feature, put the state change in `src/engine/` and let the agent choose
-or describe it. Never let model text set a number directly.
+or describe it. Never let model text set a number directly. The AI service never keeps
+game state between calls: the client sends a snapshot with each request.
 
 ## Layout
 
 ```
-server/llmProxy.ts     Vite middleware: /api/llm/status, /api/llm/chat. Holds the keys.
-src/data/names.ts      Every real proper noun (university, buildings, streets, venues)
-src/data/venues.ts     Venues and menus as data rows
-src/data/agents.ts     Persona cards, schedules, invitations, scripted lines
-src/engine/            Pure TypeScript. No DOM, no Phaser, no model calls.
-  types.ts             Tile and map types
-  mapBuilder.ts        Code-built tile maps (rooms, booths, counters, portals)
-  state.ts             GameState and newGame
-  engine.ts            Clock, meters, actions, dialogue rules, invitations, sleep
-  schedule.ts          Where each agent is at a given day and minute
-  grid.ts              Breadth-first pathfinding
-src/maps/              talley.ts (three floors), campus.ts (road plan), index.ts
-src/agents/            gateway.ts (client), runtime.ts (prompts), schema.ts, fallback.ts, filter.ts
-src/core.ts            Current GameState, event bus, local save
-src/game/              scene.ts (movement, agents, crowd, prompts), render.ts (maps and people drawn on canvas)
-src/ui/                DOM overlay: actions.ts (E-key handling, overnight flow), hud, dialogue, phone, screens, dom helpers
-tests/                 Vitest
+ai/                          Python AI service
+  app/main.py                FastAPI routes: /api/llm/status, /api/agent/turn, /api/agent/reflect,
+                             /api/director/recap, /api/director/epilogue. create_app() takes a fake chat for tests.
+  app/models.py              Request bodies (pydantic). Must match the payloads built in src/agents/runtime.ts.
+  app/prompts.py             Prompt builders
+  app/validate.py            Parses and checks model output
+  app/gateway.py             The one place model calls leave from (httpx, OpenAI chat format)
+  app/config.py              Provider selection from the repo-root .env.local
+  app/content_filter.py      Placeholder word filter (mirrored in src/agents/filter.ts for scripted mode)
+  app/rag/                   Campus knowledge: cards, BM25 index, per-character retrieval, collectors
+  data/cards/*.jsonl         Background cards (hand-written campus life, OSM places), committed
+  data/daily/*.jsonl         Collected events and news, not committed, refreshed by the service
+  tests/                     pytest
+scripts/dev.mjs              Runs the AI service and Vite together
+scripts/ai.mjs               Runs ai/.venv's Python from npm on any OS
+src/data/names.ts            Real proper nouns used by code, plus renames of OSM building names
+src/data/campusOsm.json      Main Campus from OpenStreetMap (generated by scripts/osm-campus.mjs; ODbL)
+src/data/venues.ts           Venues and menus as data rows
+src/data/agents.ts           Persona cards, schedules, invitations, scripted lines
+src/engine/                  Pure TypeScript. No DOM, no Phaser, no network.
+  state.ts, engine.ts        GameState; clock, meters, actions, dialogue rules, invitations, sleep
+  schedule.ts, grid.ts       Agent locations by time; pathfinding
+  mapBuilder.ts, types.ts    Code-built tile maps
+src/maps/                    talley.ts (three floors), campus.ts (OSM campus + doors, venues, stops), index.ts
+src/agents/                  runtime.ts (builds snapshots, calls the service), gateway.ts (fetch),
+                             schema.ts (second validation), fallback.ts (scripted lines), filter.ts
+src/core.ts                  Current GameState, event bus, local save
+src/game/                    scene.ts (movement, agents, crowd, prompts), render.ts (canvas drawing)
+src/ui/                      DOM overlay: actions.ts (E-key handling, overnight flow), hud, dialogue, phone, screens
+tests/                       Vitest
 ```
 
 ## Rules for working here
 
 - `src/engine/` stays free of DOM, Phaser and network code so it can be tested in Node.
-- Real names live only in `src/data/names.ts`. Restaurants on Hillsborough Street use
-  invented stand-ins. Every character is fictional; never add a real person.
-- API keys go in `.env.local`, read only by `server/llmProxy.ts`. Never import them into
-  `src/`, and never commit `.env.local`.
-- Every model call has a timeout and a scripted fallback. The game must be fully
-  playable with no key set.
+- Changing a request payload means changing both `src/agents/runtime.ts` and
+  `ai/app/models.py`, and the Python endpoint tests.
+- Real names live only in `src/data/` (`names.ts`, and the generated `campusOsm.json`, which keeps
+  names only for campus buildings). Hillsborough Street businesses use invented stand-ins,
+  assigned to real footprints in `campus.ts`. Every character is fictional; never add a real person.
+- API keys go in `.env.local` at the repo root, read only by `ai/app/config.py`. Never put
+  them in `src/`, and never commit `.env.local`.
+- Every model call has a timeout and a scripted fallback in `src/agents/fallback.ts`. The
+  game must stay fully playable with the AI service stopped.
 - Model calls are async and never block the frame loop.
-- Maps are built in code for now. After changing one, run `npm test`: it checks that
-  every portal, schedule spot and interactable can be reached on foot.
+- Interiors are built in code; the campus is generated from OpenStreetMap at 5 m per tile.
+  After changing a map or regenerating the data, run `npm test`: it checks that every
+  portal, schedule spot and interactable can be reached on foot, and that the major
+  buildings are present. Keep the "© OpenStreetMap contributors" credit on screen.
 - Durations and prices are balancing placeholders, not measured figures.
 
 ## LLM setup
 
 Copy `.env.example` to `.env.local` and set one provider. Groq's free tier is the
-default. The proxy picks a provider in this order: `LLM_PROVIDER` if set, else Groq if
-`GROQ_API_KEY` is set, else OpenRouter if `OPENROUTER_API_KEY` is set, else scripted
-mode. Two tiers are used: `small` for dialogue, `large` for nightly reflection and the
-director. Model names are set per tier in `.env.local`.
+default. The service picks a provider in this order: `LLM_PROVIDER` if set, else Groq if
+`GROQ_API_KEY` is set, else OpenRouter if `OPENROUTER_API_KEY` is set, else none
+(scripted mode). Two tiers: `small` for dialogue, `large` for nightly reflection and the
+director. Model names per tier can be overridden in `.env.local`. Restart the AI service
+after changing it.
+
+## Campus knowledge (RAG)
+
+Characters draw on short, sourced cards. Each dialogue turn does one BM25 lookup in
+`ai/app/rag/` (no extra model calls) and puts at most four cards in the prompt: things the
+character has heard are happening, and background facts. A character only gets cards that
+match their `topics` (`src/data/agents.ts`); campus-wide news reaches a stable ~60% of
+characters, so each one knows a different slice. Reflection also sees the character's
+upcoming events.
+
+Daily cards come from the NC State events calendar API, NC State News RSS and GoPack RSS.
+The AI service collects them every `RAG_REFRESH_HOURS` (default 6, 0 turns it off) when
+the newest file is stale, in a worker thread, then reloads the index. Cards are prompt text
+only; they never change game state. Rules for sources: respect robots.txt and each site's
+bot policy, keep excerpts short with a link, no social media, and prompts tell characters to
+refer to real people by role, not name. Check what a character would retrieve with
+`GET /api/rag/search?q=...&agent=maya&topics=biology,research`; `GET /api/rag/status`
+shows counts and the last refresh.
 
 In dev builds, `window.__sim` exposes `{ ctx, bus, game }` for debugging and browser
 smoke tests (teleport by setting `ctx.state.mapId/x/y`, then `bus.emit('map')`).
 
 ## Known gaps
 
-- Talley's interior and the campus road plan are schematic, laid out from memory. They
-  are not surveyed. Phase 2 replaces the campus with OpenStreetMap footprints.
+- Talley's interior is schematic, laid out from memory, not surveyed.
+- OSM has no Brickyard area, so `campus.ts` draws it from an estimated position. Wolf Ears
+  are placed in the Court of North Carolina for gameplay, not at a surveyed spot.
 - No art assets; everything is drawn on a canvas in `src/game/render.ts`.
 - The content filter is a short word list.
+- A public build needs the AI service hosted somewhere (it is no longer static-only).

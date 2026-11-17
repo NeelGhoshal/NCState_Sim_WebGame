@@ -160,7 +160,7 @@ describe('engine', () => {
     s.minute = 8 * 60 + 3;
     const r = rideBus(s, 'talley', 'belltower');
     expect(r.ok).toBe(true);
-    expect(s.minute).toBe(8 * 60 + 3 + 5 + 12);
+    expect(s.minute).toBe(8 * 60 + 3 + 5 + 8); // two stops on the loop: talley, fountain, belltower
     expect(s.bucket.wolfline).toBe(true);
   });
 

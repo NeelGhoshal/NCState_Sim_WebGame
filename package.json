@@ -4,11 +4,17 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite",
+    "dev:ai": "node scripts/ai.mjs -m uvicorn app.main:app --port 8000 --reload",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "test:ai": "node scripts/ai.mjs -m pytest -q",
+    "typecheck": "tsc --noEmit",
+    "map:osm": "node scripts/osm-campus.mjs --fetch",
+    "rag:update": "node scripts/ai.mjs -m app.rag.ingest",
+    "rag:static": "node scripts/ai.mjs -m app.rag.ingest --static"
   },
   "dependencies": {
     "phaser": "^3.90.0"

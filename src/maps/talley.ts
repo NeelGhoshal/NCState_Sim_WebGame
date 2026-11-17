@@ -3,6 +3,7 @@
 import { MapBuilder } from '../engine/mapBuilder';
 import type { GameMap } from '../engine/types';
 import { N } from '../data/names';
+import { TALLEY_EXITS } from './campus';
 
 const W = 64, H = 44;
 const T = N.talley;
@@ -35,8 +36,8 @@ function floor1(): GameMap {
   });
   shell(b);
   for (const x of [30, 31, 32, 33]) {
-    b.set(x, 0, 'door'); b.portal(x, 0, 'campus', x < 32 ? 47 : 48, 29);
-    b.set(x, 43, 'door'); b.portal(x, 43, 'campus', x < 32 ? 47 : 48, 41);
+    b.set(x, 0, 'door'); b.portal(x, 0, 'campus', TALLEY_EXITS.north.x, TALLEY_EXITS.north.y);
+    b.set(x, 43, 'door'); b.portal(x, 43, 'campus', TALLEY_EXITS.south.x, TALLEY_EXITS.south.y);
   }
   core(b, 'floor', undefined, 'talley2');
 

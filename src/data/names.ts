@@ -46,6 +46,9 @@ export const N = {
     reynoldsTunnel: 'Reynolds Tunnel',
     thompsonTunnel: 'Thompson Tunnel',
     centennial: 'Centennial Campus',
+    westCampus: 'West Campus',
+    eastCampus: 'East Campus',
+    quad: 'The Quad',
   },
   zone: {
     hillsborough: 'Hillsborough Street',
@@ -82,6 +85,31 @@ export const N = {
     involvement: 'Student Involvement',
     government: 'Student Government',
     uab: 'Union Activities Board',
+  },
+  // Building names as they appear in campusOsm.json (generated from OpenStreetMap), mapped to the
+  // name the game shows. Also fixes typos in the source data. "X Residence Hall" is shortened to
+  // "X Hall" in code, so those need no entry.
+  osmRename: {
+    'D. H. Hill Library': 'D.H. Hill Jr. Library',
+    'Clark Hall': 'Clark Dining Hall',
+    'Poe Hall': 'Poe Hall (closed site)',
+    'Gregg Musuem of Art and Design': 'Gregg Museum of Art & Design',
+    'Primrose Halll': 'Primrose Hall',
+    'Biltmore Hall;Robertson Wing': 'Robertson Wing',
+    'Pulp and Paper Laboratories;Biltmore Hall': 'Pulp and Paper Laboratories',
+    'J W Isenhour Tennis Complex': 'J.W. Isenhour Tennis Center',
+    'NCSU Cates Cogeneration Plant': 'Cates Utility Plant',
+    'ES King Village Commons': 'E.S. King Village Commons',
+    'Woodson Hall': 'Woodson Hall (under construction)',
+  } as Record<string, string>,
+  // Street names as they appear in the OpenStreetMap data, and the short form drawn on the map.
+  osmRoad: {
+    hillsborough: 'Hillsborough Street',
+    dunn: 'Dunn Avenue',
+    cates: 'Cates Avenue',
+    western: 'Western Boulevard',
+    danAllen: 'Dan Allen Drive',
+    pullen: 'Pullen Road',
   },
   bus: { name: 'Wolfline', route: 'Route 30' },
   // Invented stand-ins. Real Hillsborough Street businesses are not used.

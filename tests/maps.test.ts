@@ -3,6 +3,7 @@ import { MAPS } from '../src/maps/index';
 import { AGENTS, ALL_INVITES } from '../src/data/agents';
 import { VENUES } from '../src/data/venues';
 import { BUS_STOPS } from '../src/maps/campus';
+import { N } from '../src/data/names';
 import { reachable } from '../src/engine/grid';
 import { isSolid, type GameMap } from '../src/engine/types';
 
@@ -79,5 +80,19 @@ describe('maps', () => {
 
   it('bus stops are walkable', () => {
     for (const s of Object.values(BUS_STOPS)) expect(isSolid(MAPS.campus, s.x, s.y)).toBe(false);
+  });
+
+  it('campus has the major buildings from OpenStreetMap', () => {
+    const names = new Set(MAPS.campus.buildings.map((b) => b.name));
+    const B = N.bldg;
+    for (const n of [B.talley, B.witherspoon, B.reynolds, B.carmichael, B.dhhill, B.belltower, B.holladay, B.b1911,
+      B.tompkins, B.caldwell, B.winston, B.page, B.leazar, B.cox, B.dabney, B.poe, B.thompson, B.health, B.deck,
+      B.fountain, B.clark, B.tucker, B.owen, B.bowen, B.metcalf, B.carroll, B.bragaw,
+      'Riddick Hall', 'Mann Hall', 'Withers Hall', 'Nelson Hall', 'SAS Hall', 'Harris Hall', 'Price Music Center',
+      'Case Academic Center', 'Lee Hall', 'Sullivan Hall', 'Syme Hall', 'Gold Hall', 'Welch Hall', 'Bagwell Hall',
+      'Becton Hall', 'Berry Hall', 'Marye Anne Fox Science Teaching Laboratory', 'Jordan Hall', 'Biltmore Hall']) {
+      expect(names.has(n), n).toBe(true);
+    }
+    expect(MAPS.campus.buildings.filter((b) => b.name && b.style !== 'shop').length).toBeGreaterThan(120);
   });
 });

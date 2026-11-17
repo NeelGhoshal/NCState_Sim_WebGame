@@ -38,6 +38,12 @@ export interface AgentDef {
   tier: 'core' | 'supporting';
   role: string;
   pronouns: string;
+  /**
+   * What this character follows. Decides which real campus happenings and background cards
+   * the AI service retrieves for them (ai/app/rag/topics.py lists the topics). 'all' hears
+   * everything; everyone also knows general campus facts.
+   */
+  topics: string[];
   colors: { skin: string; hair: string; shirt: string; pants: string };
   persona: string;
   speech: string;
@@ -68,6 +74,7 @@ export const AGENTS: AgentDef[] = [
     name: 'Maya Okafor',
     tier: 'core',
     role: 'your roommate',
+    topics: ['biology', 'science', 'research', 'residence', 'dining', 'wellness'],
     pronouns: 'she/her',
     colors: { skin: '#8d5a3b', hair: '#1d1410', shirt: '#2f8f6f', pants: '#2b2f45' },
     persona: 'A first-year biology major from Charlotte and your roommate in Tucker Hall. Early riser, keeps succulents on the windowsill and a shared chore chart on the fridge. Wants to get into a research lab by spring and is quietly worried she is behind.',
@@ -125,6 +132,7 @@ export const AGENTS: AgentDef[] = [
     name: 'Jordan Ellis',
     tier: 'core',
     role: `president of ${N.club}, the campus makers club`,
+    topics: ['engineering', 'makers', 'technology', 'entrepreneurship', 'clubs', 'career'],
     pronouns: 'they/them',
     colors: { skin: '#e0b48f', hair: '#c44d2a', shirt: '#d9a21b', pants: '#33363d' },
     persona: `A third-year mechanical engineering student and president of ${N.club}, a club that builds weird hardware projects. Runs on cold brew. Needs new members before the spring hackathon or the club loses its funding tier.`,
@@ -187,6 +195,7 @@ export const AGENTS: AgentDef[] = [
     name: 'Dev Kapoor',
     tier: 'core',
     role: 'your rival in CH 101',
+    topics: ['premed', 'health', 'science', 'research', 'academics', 'career'],
     pronouns: 'he/him',
     colors: { skin: '#a8754f', hair: '#16110e', shirt: '#3b5ba8', pants: '#1e2230' },
     persona: 'A first-year pre-med student in your CH 101 section who has decided you are his competition. Sets the curve on purpose. Underneath, anxious about disappointing his parents, and would never admit it.',
@@ -241,6 +250,7 @@ export const AGENTS: AgentDef[] = [
     name: 'Sam Rivera',
     tier: 'supporting',
     role: `barista at ${T.pcj}`,
+    topics: ['dining', 'arts', 'clubs', 'athletics', 'service'],
     pronouns: 'they/them',
     colors: { skin: '#c68e63', hair: '#5a2e8a', shirt: '#6b3a1f', pants: '#2a2a2a' },
     persona: `A senior and the morning barista at ${T.pcj} in Talley. Knows every regular's order and most of the gossip.`,
@@ -270,6 +280,7 @@ export const AGENTS: AgentDef[] = [
     name: 'Walt Brooks',
     tier: 'supporting',
     role: `staff at the ${N.bldg.talley} information desk`,
+    topics: ['all'],
     pronouns: 'he/him',
     colors: { skin: '#e8c4a0', hair: '#bdbdbd', shirt: '#9e1b1b', pants: '#30343c' },
     persona: `Has worked the ${N.bldg.talley} information desk for nineteen years. Knows the building better than its architects.`,

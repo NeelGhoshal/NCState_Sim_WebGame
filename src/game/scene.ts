@@ -5,7 +5,7 @@ import { AGENTS, CROWD_LINES } from '../data/agents';
 import { agentHere, walkTime, TALK_RANGE } from '../engine/engine';
 import { findPath } from '../engine/grid';
 import { type GameMap, type Pt, isSolid } from '../engine/types';
-import { renderMap, renderPerson, TS } from './render';
+import { CHUNK, isChunked, renderMap, renderPerson, renderRegion, TS } from './render';
 import { interact, handleEvents, type Target } from '../ui/actions';
 
 interface Walker {
@@ -23,11 +23,16 @@ const CROWD_COLORS = ['#c0392b', '#2c3e50', '#16a085', '#8e44ad', '#d35400', '#7
 const SKINS = ['#f1d0b0', '#e0b48f', '#c68e63', '#a8754f', '#8d5a3b', '#5e3a24'];
 const HAIRS = ['#1d1410', '#4a2c1a', '#8b5a2b', '#d8b26e', '#2b2b2b', '#a33b20'];
 
+/** Canvas pixels per world pixel for the low-detail picture of a large map. */
+const OVERVIEW_SCALE = 0.2;
+
 const cheb = (a: Pt, b: Pt) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 
 export class WorldScene extends Phaser.Scene {
   private map!: GameMap;
   private bg?: Phaser.GameObjects.Image;
+  /** Full-detail chunks of a large map, keyed "cx,cy", drawn over a low-detail overview. */
+  private chunks = new Map<string, Phaser.GameObjects.Image>();
   private player!: Walker;
   private agents = new Map<string, Walker & { visible: boolean }>();
   private crowd: CrowdMember[] = [];
@@ -72,7 +77,8 @@ export class WorldScene extends Phaser.Scene {
 
   private minZoom() {
     if (!this.map) return 0.3;
-    return Math.max(this.scale.width / (this.map.w * TS), this.scale.height / (this.map.h * TS), 0.3);
+    const floor = isChunked(this.map) ? 0.08 : 0.3;
+    return Math.max(this.scale.width / (this.map.w * TS), this.scale.height / (this.map.h * TS), floor);
   }
 
   private toggleOverview() {
@@ -101,10 +107,18 @@ export class WorldScene extends Phaser.Scene {
     const s = ctx.state;
     if (!s) return;
     this.map = MAPS[s.mapId];
-    const key = `map:${this.map.id}`;
-    if (!this.textures.exists(key)) this.textures.addCanvas(key, renderMap(this.map));
     this.bg?.destroy();
-    this.bg = this.add.image(0, 0, key).setOrigin(0).setDepth(0);
+    this.clearChunks();
+    if (isChunked(this.map)) {
+      // The whole campus at low detail stays underneath; chunks stream in over it near the camera.
+      const key = `map:${this.map.id}:overview`;
+      if (!this.textures.exists(key)) this.textures.addCanvas(key, renderRegion(this.map, 0, 0, this.map.w, this.map.h, OVERVIEW_SCALE));
+      this.bg = this.add.image(0, 0, key).setOrigin(0).setDepth(0).setScale(1 / OVERVIEW_SCALE);
+    } else {
+      const key = `map:${this.map.id}`;
+      if (!this.textures.exists(key)) this.textures.addCanvas(key, renderMap(this.map));
+      this.bg = this.add.image(0, 0, key).setOrigin(0).setDepth(0);
+    }
 
     this.player?.img.destroy();
     this.player?.label?.destroy();
@@ -128,6 +142,44 @@ export class WorldScene extends Phaser.Scene {
     cam.setBackgroundColor(this.map.outdoor ? '#3c5a32' : '#1b1c22');
     this.fitOverlay();
     this.syncAgents(true);
+  }
+
+  private clearChunks() {
+    for (const img of this.chunks.values()) { const key = img.texture.key; img.destroy(); this.textures.remove(key); }
+    this.chunks.clear();
+  }
+
+  /** Draws the chunks around the camera (a few per frame) and drops far ones. */
+  private updateChunks() {
+    if (!isChunked(this.map)) return;
+    const cam = this.cameras.main;
+    const size = CHUNK * TS;
+    const v = cam.worldView;
+    const detail = cam.zoom >= 0.4;
+    const cx0 = Math.floor(v.x / size) - 1, cx1 = Math.floor((v.x + v.width) / size) + 1;
+    const cy0 = Math.floor(v.y / size) - 1, cy1 = Math.floor((v.y + v.height) / size) + 1;
+    for (const [k, img] of this.chunks) {
+      const [cx, cy] = k.split(',').map(Number);
+      const far = cx < cx0 - 2 || cx > cx1 + 2 || cy < cy0 - 2 || cy > cy1 + 2;
+      if (far || (!detail && this.chunks.size > 24)) { const key = img.texture.key; img.destroy(); this.textures.remove(key); this.chunks.delete(k); }
+      else img.setVisible(detail);
+    }
+    if (!detail) return;
+    let budget = 2;
+    const want: [number, number, number][] = [];
+    const mid = { x: (v.x + v.width / 2) / size, y: (v.y + v.height / 2) / size };
+    for (let cy = Math.max(0, cy0); cy <= Math.min(cy1, Math.ceil(this.map.h / CHUNK) - 1); cy++) {
+      for (let cx = Math.max(0, cx0); cx <= Math.min(cx1, Math.ceil(this.map.w / CHUNK) - 1); cx++) {
+        if (!this.chunks.has(`${cx},${cy}`)) want.push([cx, cy, (cx + 0.5 - mid.x) ** 2 + (cy + 0.5 - mid.y) ** 2]);
+      }
+    }
+    want.sort((a, b) => a[2] - b[2]);
+    for (const [cx, cy] of want) {
+      if (budget-- <= 0) break;
+      const k = `${cx},${cy}`, key = `chunk:${this.map.id}:${k}`;
+      if (!this.textures.exists(key)) this.textures.addCanvas(key, renderRegion(this.map, cx * CHUNK, cy * CHUNK, CHUNK, CHUNK, 1));
+      this.chunks.set(k, this.add.image(cx * size, cy * size, key).setOrigin(0).setDepth(1));
+    }
   }
 
   private spawnCrowd() {
@@ -284,15 +336,19 @@ export class WorldScene extends Phaser.Scene {
       if (c.w.path.length) { this.step(c.w, dt); continue; }
       c.wait -= dt;
       if (c.wait <= 0 && !c.sitter) {
+        // Wander to a spot nearby; on a big map a random spot could be across campus.
         const spots = this.map.crowdSpots;
-        const goal = spots[this.rng.between(0, spots.length - 1)];
-        if (!isSolid(this.map, goal.x, goal.y)) {
+        let goal = spots[this.rng.between(0, spots.length - 1)];
+        for (let k = 0; k < 12 && cheb(goal, c.w) > 30; k++) goal = spots[this.rng.between(0, spots.length - 1)];
+        if (cheb(goal, c.w) <= 40 && !isSolid(this.map, goal.x, goal.y)) {
           const path = findPath(this.map, { x: c.w.x, y: c.w.y }, goal);
           if (path && path.length < 60) c.w.path = path;
         }
         c.wait = this.rng.between(6, 20);
       }
     }
+
+    this.updateChunks();
 
     // Night tint outdoors
     const hour = (s.minute / 60) % 24;

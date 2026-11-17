@@ -13,7 +13,7 @@ export interface Result { ok: boolean; msg: string; events: Ev[] }
 
 export const EXCHANGE_MIN = 5;
 export const TALK_RANGE = 2;
-export const BUS = { interval: 8, ride: 4, first: 7 * 60, last: 22 * 60, order: ['talley', 'carmichael', 'fountain', 'belltower'] };
+export const BUS = { interval: 8, ride: 4, first: 7 * 60, last: 22 * 60, order: ['talley', 'fountain', 'belltower', 'quad'] };
 
 export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const fail = (msg: string): Result => ({ ok: false, msg, events: [] });

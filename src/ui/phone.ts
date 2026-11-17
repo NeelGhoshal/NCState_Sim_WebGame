@@ -93,7 +93,7 @@ function body(): string {
       const st = llmStatus();
       const u = s.usage;
       const tok = (t: typeof u.small) => `${t.calls} calls · ${t.promptTokens.toLocaleString()} in / ${t.completionTokens.toLocaleString()} out`;
-      return `<h3>Model</h3><p>${st.configured ? `Provider: <b>${esc(st.provider!)}</b><br>small: ${esc(st.models!.small)}<br>large: ${esc(st.models!.large)}` : 'Scripted mode. Add a key to <code>.env.local</code> and restart <code>npm run dev</code> to use a model.'}</p>
+      return `<h3>Model</h3><p>${st.configured ? `Provider: <b>${esc(st.provider!)}</b><br>small: ${esc(st.models!.small)}<br>large: ${esc(st.models!.large)}` : st.server ? 'Scripted mode. The Python AI service is running but has no key: add one to <code>.env.local</code> and restart <code>npm run dev</code>.' : 'Scripted mode. The Python AI service (<code>ai/</code>) is not running. Start it with <code>npm run dev</code>.'}</p>
         <h3>Usage this episode</h3><ul><li>Dialogue (small): ${tok(u.small)}</li><li>Reflection and director (large): ${tok(u.large)}</li><li>Fallbacks to scripts: ${u.fallbacks}</li>
         <li>Total tokens: <b>${(u.small.promptTokens + u.small.completionTokens + u.large.promptTokens + u.large.completionTokens).toLocaleString()}</b></li></ul>
         <h3>Controls</h3><p class="muted">WASD or arrows to walk · click to walk there · E to talk or use · P phone · M map overview · mouse wheel to zoom · Esc to close</p>`;

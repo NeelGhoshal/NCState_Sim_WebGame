@@ -4,7 +4,7 @@ export type Ground =
   | 'void' | 'grass' | 'sidewalk' | 'plaza' | 'roadH' | 'roadV' | 'roadX' | 'crosswalk'
   | 'rail' | 'tunnel' | 'parking' | 'field' | 'water' | 'site' | 'bldg' | 'door'
   | 'floor' | 'tile' | 'carpet' | 'wood' | 'rug' | 'wall' | 'glass' | 'kitchen'
-  | 'stage' | 'stairsUp' | 'stairsDown';
+  | 'stage' | 'stairsUp' | 'stairsDown' | 'road' | 'underpass';
 
 export type Obj =
   | 'tree' | 'fence' | 'counter' | 'table' | 'seatN' | 'seatS' | 'chair' | 'sofa'
@@ -32,8 +32,26 @@ export interface Interactable {
 
 export interface Portal { x: number; y: number; toMap: string; tx: number; ty: number }
 
-export type BuildingStyle = 'academic' | 'union' | 'residence' | 'dining' | 'athletic' | 'shop' | 'parking' | 'landmark' | 'service';
-export interface BuildingMeta { name: string; x: number; y: number; w: number; h: number; style: BuildingStyle }
+export type BuildingStyle =
+  | 'academic' | 'union' | 'residence' | 'dining' | 'athletic' | 'shop' | 'parking' | 'landmark' | 'service'
+  | 'offcampus' | 'closed';
+/**
+ * A building. x/y/w/h is its bounding box in tiles. `poly` (flat [x0,y0,x1,y1,...] in tiles) is its
+ * real outline when it has one; without it the box is the footprint.
+ */
+export interface BuildingMeta {
+  name: string; x: number; y: number; w: number; h: number; style: BuildingStyle;
+  poly?: number[];
+  /** Draw the name on the map. Off for the second and later parts of a multi-part building. */
+  label?: boolean;
+  /** Large enough to label on the zoomed-out overview. */
+  major?: boolean;
+}
+
+/** Smooth shapes drawn under the buildings of an outdoor map. Coordinates are tiles. */
+export interface MapLine { k: string; p: number[]; name?: string; tunnel?: 1; bridge?: 1 }
+export interface MapArea { k: string; p: number[]; name?: string }
+export interface MapVectors { lines: MapLine[]; areas: MapArea[] }
 
 export interface LabelMeta {
   x: number; y: number; text: string;
@@ -59,6 +77,9 @@ export interface GameMap {
   secPerMinute: number; // real seconds of walking per game minute
   crowd: number;
   spawn: Pt;
+  vectors?: MapVectors;
+  /** Data credit shown while on this map. */
+  credit?: string;
 }
 
 export function isSolid(map: GameMap, x: number, y: number): boolean {

@@ -49,6 +49,7 @@ function render() {
     <div class="hud-right">
       <span class="chip ${llmStatus().configured ? 'ok' : ''}">${llmStatus().configured ? `AI · ${esc(llmStatus().provider!)}` : 'Scripted'}</span>
       <button id="phone-btn" class="panel">📱 Phone <kbd>P</kbd>${unread ? `<span class="badge">${unread}</span>` : ''}</button>
-    </div>`;
+    </div>
+    ${map.credit ? `<a class="map-credit" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">${esc(map.credit)}</a>` : ''}`;
   hud.querySelector<HTMLButtonElement>('#phone-btn')!.onclick = () => bus.emit('phone');
 }
