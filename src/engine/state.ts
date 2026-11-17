@@ -34,10 +34,17 @@ export const BUCKET = [
 
 export interface PlayerSetup { name: string; pronouns: string; traits: Traits; budget: Budget }
 export interface Memory { day: number; minute: number; text: string; importance: number }
+/** A fact a character heard from someone else. `origin` is 'player' when the player started it on its way. */
+export interface Heard { from: string; origin: string; day: number; minute: number }
 export interface AgentState {
   rel: number; note: string; battery: number; memories: Memory[]; goal: string;
+  /** Facts this character has told the player. */
   shared: string[]; giftDay: number; talkedToday: number; met: boolean;
+  /** Facts this character heard from others (fact id -> how). Their own facts are not listed. */
+  heard: Record<string, Heard>;
 }
+/** One step of a fact moving between people. 'exposed' means the owner found out the player spread it. */
+export interface Rumor { fact: string; from: string; to: string; day: number; minute: number; kind: 'told' | 'exposed' }
 export type InviteStatus = 'unoffered' | 'pending' | 'accepted' | 'declined' | 'attended' | 'missed';
 export interface InviteState { status: InviteStatus; presentMin: number }
 export interface TextMsg { from: string; day: number; minute: number; body: string; read: boolean }
@@ -61,6 +68,9 @@ export interface GameState {
   log: Stamped[];
   txns: Txn[];
   notes: string[];
+  /** Fact ids the player has learned, so they can pass them on. */
+  knownFacts: string[];
+  rumors: Rumor[];
   bucket: Record<string, boolean>;
   flags: Record<string, number>;
   recaps: { day: number; text: string; source: 'llm' | 'fallback' }[];
@@ -84,10 +94,10 @@ export function newGame(setup: PlayerSetup): GameState {
     classAttended: {},
     agents: Object.fromEntries(AGENTS.map((a) => [a.id, {
       rel: a.startRel, note: a.startNote, battery: a.battery, memories: [], goal: a.dayGoals[0],
-      shared: [], giftDay: 0, talkedToday: 0, met: false,
+      shared: [], giftDay: 0, talkedToday: 0, met: false, heard: {},
     }])),
     invites: Object.fromEntries(ALL_INVITES.map((i) => [i.id, { status: 'unoffered' as InviteStatus, presentMin: 0 }])),
-    texts: [], feed: [], log: [], txns: [], notes: [],
+    texts: [], feed: [], log: [], txns: [], notes: [], knownFacts: [], rumors: [],
     bucket: {}, flags: {}, recaps: [],
     usage: { calls: 0, fallbacks: 0, small: tier(), large: tier() },
     ended: false,
@@ -97,4 +107,18 @@ export function newGame(setup: PlayerSetup): GameState {
 export function validTraits(t: Traits): boolean {
   const vals = TRAIT_KEYS.map((k) => t[k]);
   return vals.every((v) => Number.isInteger(v) && v >= 1 && v <= 10) && vals.reduce((a, b) => a + b, 0) <= TRAIT_KEYS.length + TRAIT_POINTS;
+}
+
+/** Fills fields added since a save was written, so old saves keep loading. */
+export function migrate(s: GameState): GameState {
+  s.knownFacts ??= [];
+  s.rumors ??= [];
+  for (const a of Object.values(s.agents)) a.heard ??= {};
+  for (const def of AGENTS) {
+    s.agents[def.id] ??= {
+      rel: def.startRel, note: def.startNote, battery: def.battery, memories: [], goal: def.dayGoals[0],
+      shared: [], giftDay: 0, talkedToday: 0, met: false, heard: {},
+    };
+  }
+  return s;
 }

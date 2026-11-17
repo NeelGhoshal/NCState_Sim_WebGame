@@ -44,7 +44,9 @@ def turn_messages(req: TurnRequest, happenings: list[str] | None = None, backgro
         *campus_block(req.university, happenings or [], background or []),
         f"Actions you may take this turn: {', '.join(req.allowed.actions)}.",
         f"Invitations you may extend (only if it fits naturally):\n{invites}" if invites else "",
-        f"Things you know and may share (action share_info):\n{facts}" if facts else "",
+        (f"Things you know and may share (action share_info):\n{facts}\n"
+         "Some you only heard from someone else. One marked as said in private is gossip: share it only if "
+         "that fits who you are and how much you trust the player.") if facts else "",
         f'You may give the player {req.gift.label} (action give, arg "{req.gift.id}").' if req.gift else "",
         "You cannot give money, grades, or anything not listed. Do not invent events that already happened.",
         'Reply ONLY with a JSON object: {"say": string, "action": string, "action_arg": string, '

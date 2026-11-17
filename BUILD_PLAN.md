@@ -41,14 +41,14 @@ the end screen).
 
 ## Phase 1 — Make the agents worth talking to
 
-- [ ] Rumor network: `share_info` moves facts between agents, each deciding whether to pass them on
+- [x] Rumor network: facts spread between characters who share a place (`src/engine/rumors.ts`); the player can pass on what they learned, and a spread secret that gets back to its owner costs trust
 - [ ] Persuasion with history: extension and shift-swap requests, capped by the engine
 - [ ] Group decisions offscreen: a club vote settled by several agents
 - [ ] Agent-written texts (now scripted) and agent-initiated favors
 - [x] Campus knowledge retrieval: sourced cards, per-character topics, daily NC State events and news (`ai/app/rag/`)
-- [ ] Importance-scored memory retrieval instead of "last eight memories"
+- [x] Importance-scored memory retrieval instead of "last eight memories" (`src/engine/memory.ts`)
 - [ ] Routing thresholds between the small and large model, taken from the LLM Cost Router results
-- [ ] Saved-session replay as a regression test for agent behavior
+- [~] Saved-session replay as a regression test for agent behavior: a scripted three-day session test checks ranges, zero invalid actions and deterministic rumors; recording real sessions is still to do
 - [ ] Content filter beyond the current word list; decide the age rating first
 
 **Gate 1:** Do characters surprise you without breaking state? Zero invalid actions

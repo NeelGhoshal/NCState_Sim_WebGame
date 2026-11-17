@@ -1,7 +1,7 @@
 import { ctx, bus, save } from '../core';
-import { AGENT_BY_ID, AGENTS, ALL_INVITES, INVITE_OWNER } from '../data/agents';
+import { AGENT_BY_ID, AGENTS, ALL_INVITES, FACTS, INVITE_OWNER } from '../data/agents';
 import { fmtTime, fmtMoney, upcoming, nextEventMinute, advance, respondInvite, agentHere } from '../engine/engine';
-import { BUCKET, DAY_END } from '../engine/state';
+import { BUCKET, DAY_END, type GameState } from '../engine/state';
 import { MAPS } from '../maps/index';
 import { llmStatus } from '../agents/gateway';
 import { el, esc, root, setModal } from './dom';
@@ -88,7 +88,7 @@ function body(): string {
     case 'bucket':
       return `<h3>Bucket list</h3><ul class="bucket">${BUCKET.map((b) => `<li class="${s.bucket[b.id] ? 'done' : ''}">${s.bucket[b.id] ? '☑' : '☐'} ${esc(b.text)}</li>`).join('')}</ul>`;
     case 'notes':
-      return `<h3>Notes</h3><ul>${s.notes.map((n) => `<li>${esc(n)}</li>`).join('') || '<li class="muted">Things people tell you end up here.</li>'}</ul>`;
+      return `<h3>Notes</h3><ul>${s.notes.map((n) => `<li>${esc(n)}</li>`).join('') || '<li class="muted">Things people tell you end up here.</li>'}</ul>${toldList(s)}`;
     case 'system': {
       const st = llmStatus();
       const u = s.usage;
@@ -132,3 +132,13 @@ function render() {
 
 bus.on('phone', () => { if (!ctx.modal || open) togglePhone(); });
 window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && open) closePhone(); });
+
+/** Who the player has passed things on to, so spreading a secret is a visible choice. */
+function toldList(s: GameState): string {
+  const told = s.rumors.filter((r) => r.from === 'player' && r.kind === 'told');
+  if (!told.length) return '';
+  return `<h3>You passed on</h3><ul>${told.map((r) => {
+    const f = FACTS[r.fact];
+    return `<li>${esc(f?.text ?? r.fact)} <span class="muted">to ${esc(AGENT_BY_ID[r.to]?.name ?? r.to)}, day ${r.day} ${fmtTime(r.minute)}</span></li>`;
+  }).join('')}</ul>`;
+}

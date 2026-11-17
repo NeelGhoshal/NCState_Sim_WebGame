@@ -1,5 +1,5 @@
 // Scripted behavior used when no model is configured, a call fails, or output is invalid.
-import { AGENT_BY_ID, ALL_INVITES, INVITE_OWNER } from '../data/agents';
+import { AGENT_BY_ID, ALL_INVITES, FACTS, INVITE_OWNER } from '../data/agents';
 import { type AgentTurn, type Allowed, type Reflection, fmtTime } from '../engine/engine';
 import type { GameState } from '../engine/state';
 
@@ -34,10 +34,18 @@ export function fallbackTurn(s: GameState, agentId: string, allowed: Allowed, ex
     turn.say = 'Here, on the house. Do not tell my manager.';
     turn.action = 'give'; turn.action_arg = allowed.argsFor.give[0];
   } else if (allowed.argsFor.share_info && (exchange >= 2 || /\b(tip|know|where|how|what)\b/.test(lower))) {
-    const fact = def.facts.find((f) => f.id === allowed.argsFor.share_info[0])!;
-    turn.say = `Oh, here is something: ${fact.text}`;
+    // Their own facts first; repeat what they heard only if they like to gossip.
+    const own = allowed.argsFor.share_info.filter((id) => FACTS[id].owner === agentId);
+    const pickId = own[0] ?? (def.gossip >= 0.5 ? allowed.argsFor.share_info[0] : undefined);
+    if (!pickId) return withMemory(turn, playerText);
+    const fact = FACTS[pickId];
+    turn.say = fact.owner === agentId ? `Oh, here is something: ${fact.text}` : `Okay, you did not hear this from me: ${fact.text}`;
     turn.action = 'share_info'; turn.action_arg = fact.id;
   }
+  return withMemory(turn, playerText);
+}
+
+function withMemory(turn: AgentTurn, playerText: string): AgentTurn {
   if (playerText) turn.memory ||= `The player said: "${playerText.slice(0, 80)}"`;
   return turn;
 }

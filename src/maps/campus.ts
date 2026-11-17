@@ -11,7 +11,7 @@ import { isSolid } from '../engine/types';
 import { N } from '../data/names';
 import osm from '../data/campusOsm.json';
 
-interface OsmBuilding { id: string; tag: string; p: number[]; name?: string; campus?: number }
+interface OsmBuilding { id: string; tag: string; p: number[]; name?: string; campus?: number; levels?: number }
 interface OsmData {
   bbox: { south: number; west: number; north: number; east: number };
   metersPerTile: number; w: number; h: number; license: string;
@@ -49,6 +49,17 @@ export const shortRoad = (name: string) => SHORT.reduce((s, [re, to]) => s.repla
 
 function displayName(raw: string) {
   return N.osmRename[raw] ?? raw.replace(/ Residence Hall$/, ' Hall');
+}
+
+/** Floors when OSM does not say: a typical height for the kind of building. */
+const DEFAULT_LEVELS: Record<BuildingStyle, number> = {
+  academic: 3, union: 3, residence: 4, dining: 2, athletic: 3, shop: 2, parking: 4, landmark: 8,
+  service: 2, offcampus: 2, closed: 4,
+};
+function levelsFor(o: OsmBuilding, style: BuildingStyle, area: number): number {
+  if (o.levels && o.levels > 0) return Math.min(o.levels, 14);
+  if (area < 12) return 1; // sheds, kiosks, small outbuildings
+  return DEFAULT_LEVELS[style];
 }
 
 function styleFor(b: OsmBuilding, name: string | undefined): BuildingStyle {
@@ -109,8 +120,10 @@ export function buildCampus(): GameMap {
     const area = polyArea(o.p);
     const first = name ? !seen.has(name) : false;
     if (name) seen.set(name, (seen.get(name) ?? 0) + 1);
-    const tiles = b.polyBuilding(name ?? '', o.p, styleFor(o, name), {
+    const style = styleFor(o, name);
+    const tiles = b.polyBuilding(name ?? '', o.p, style, {
       label: first, major: first && (area >= 160 || name === B.belltower || name === B.talley || name === B.dhhill),
+      levels: levelsFor(o, style, area),
     });
     if (first && name) { tilesOf.set(name, tiles); metaOf.set(name, b.buildings[b.buildings.length - 1]); }
   }

@@ -63,6 +63,9 @@ src/data/agents.ts           Persona cards, schedules, invitations, scripted lin
 src/engine/                  Pure TypeScript. No DOM, no Phaser, no network.
   state.ts, engine.ts        GameState; clock, meters, actions, dialogue rules, invitations, sleep
   schedule.ts, grid.ts       Agent locations by time; pathfinding
+  rumors.ts                  Who knows which fact; gossip between co-located characters; telling
+  memory.ts                  Which memories a character brings to a conversation
+  util.ts                    clamp, memories, relationships, and `chance` (stable hash; the engine's only randomness)
   mapBuilder.ts, types.ts    Code-built tile maps
 src/maps/                    talley.ts (three floors), campus.ts (OSM campus + doors, venues, stops), index.ts
 src/agents/                  runtime.ts (builds snapshots, calls the service), gateway.ts (fetch),

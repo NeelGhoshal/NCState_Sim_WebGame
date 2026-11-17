@@ -29,7 +29,20 @@ export interface InviteDef {
   missedMemory: string;
 }
 
-export interface Fact { id: string; text: string }
+/**
+ * Something a character knows and may tell. Facts move between characters through the rumor
+ * network (src/engine/rumors.ts) and reach the player through share_info.
+ */
+export interface Fact {
+  id: string;
+  text: string;
+  /** Private to its owner: passing it on is gossip, and the owner minds if it gets back to them. */
+  secret?: boolean;
+  /** 0..1: how tempting it is to repeat. Multiplied by the teller's gossip level. */
+  spread?: number;
+  /** How the owner refers to it when it gets back to them ("my lab email"). */
+  topic?: string;
+}
 export interface Gift { id: string; label: string; energy: number; hunger: number; stress: number }
 
 export interface AgentDef {
@@ -44,6 +57,8 @@ export interface AgentDef {
    * everything; everyone also knows general campus facts.
    */
   topics: string[];
+  /** 0..1: how readily this character passes on what they hear. */
+  gossip: number;
   colors: { skin: string; hair: string; shirt: string; pants: string };
   persona: string;
   speech: string;
@@ -75,6 +90,7 @@ export const AGENTS: AgentDef[] = [
     tier: 'core',
     role: 'your roommate',
     topics: ['biology', 'science', 'research', 'residence', 'dining', 'wellness'],
+    gossip: 0.35,
     pronouns: 'she/her',
     colors: { skin: '#8d5a3b', hair: '#1d1410', shirt: '#2f8f6f', pants: '#2b2f45' },
     persona: 'A first-year biology major from Charlotte and your roommate in Tucker Hall. Early riser, keeps succulents on the windowsill and a shared chore chart on the fridge. Wants to get into a research lab by spring and is quietly worried she is behind.',
@@ -87,8 +103,8 @@ export const AGENTS: AgentDef[] = [
       'Email a professor about lab openings without overthinking it.',
     ],
     facts: [
-      { id: 'maya_lab', text: 'Maya has a professor she wants to email about lab openings but keeps rewriting the draft.' },
-      { id: 'maya_tuffys', text: "Maya says Tuffy's milkshakes are the best stress cure in Talley." },
+      { id: 'maya_lab', text: 'Maya has a professor she wants to email about lab openings but keeps rewriting the draft.', secret: true, spread: 0.5, topic: 'my lab email' },
+      { id: 'maya_tuffys', text: "Maya says Tuffy's milkshakes are the best stress cure in Talley.", spread: 0.6 },
     ],
     schedule: [
       { from: h(6), to: h(8), mapId: 'campus', spot: 'c.dorm', activity: 'heading out from Tucker Hall' },
@@ -133,6 +149,7 @@ export const AGENTS: AgentDef[] = [
     tier: 'core',
     role: `president of ${N.club}, the campus makers club`,
     topics: ['engineering', 'makers', 'technology', 'entrepreneurship', 'clubs', 'career'],
+    gossip: 0.6,
     pronouns: 'they/them',
     colors: { skin: '#e0b48f', hair: '#c44d2a', shirt: '#d9a21b', pants: '#33363d' },
     persona: `A third-year mechanical engineering student and president of ${N.club}, a club that builds weird hardware projects. Runs on cold brew. Needs new members before the spring hackathon or the club loses its funding tier.`,
@@ -145,8 +162,8 @@ export const AGENTS: AgentDef[] = [
       'Run build night and see who actually comes back.',
     ],
     facts: [
-      { id: 'jordan_printer', text: `The ${N.club} 3D printer has been broken for a week and Jordan is quietly panicking about it.` },
-      { id: 'jordan_funding', text: `${N.club} needs more active members to keep its funding tier.` },
+      { id: 'jordan_printer', text: `The ${N.club} 3D printer has been broken for a week and Jordan is quietly panicking about it.`, secret: true, spread: 0.6, topic: 'the printer' },
+      { id: 'jordan_funding', text: `${N.club} needs more active members to keep its funding tier.`, spread: 0.9 },
     ],
     schedule: [
       { from: h(9), to: h(11, 30), mapId: 'campus', spot: 'c.brickyard', activity: `tabling for ${N.club} in the Brickyard`, feed: `Tabling in the Brickyard! Come say hi, we have stickers.` },
@@ -196,6 +213,7 @@ export const AGENTS: AgentDef[] = [
     tier: 'core',
     role: 'your rival in CH 101',
     topics: ['premed', 'health', 'science', 'research', 'academics', 'career'],
+    gossip: 0.2,
     pronouns: 'he/him',
     colors: { skin: '#a8754f', hair: '#16110e', shirt: '#3b5ba8', pants: '#1e2230' },
     persona: 'A first-year pre-med student in your CH 101 section who has decided you are his competition. Sets the curve on purpose. Underneath, anxious about disappointing his parents, and would never admit it.',
@@ -208,8 +226,8 @@ export const AGENTS: AgentDef[] = [
       'Ace the CH 101 quiz.',
     ],
     facts: [
-      { id: 'dev_quiz', text: 'Dev heard the CH 101 quiz on day 3 is heavy on stoichiometry.' },
-      { id: 'dev_parents', text: 'Dev calls home every night and his parents always ask about his grades first.' },
+      { id: 'dev_quiz', text: 'Dev heard the CH 101 quiz on day 3 is heavy on stoichiometry.', spread: 0.7 },
+      { id: 'dev_parents', text: 'Dev calls home every night and his parents always ask about his grades first.', secret: true, spread: 0.35, topic: 'my parents' },
     ],
     schedule: [
       { from: h(7), to: h(9, 30), mapId: 'talley1', spot: 'f1.pcj.t1', activity: 'doing flashcards at Port City Java' },
@@ -251,6 +269,7 @@ export const AGENTS: AgentDef[] = [
     tier: 'supporting',
     role: `barista at ${T.pcj}`,
     topics: ['dining', 'arts', 'clubs', 'athletics', 'service'],
+    gossip: 0.85,
     pronouns: 'they/them',
     colors: { skin: '#c68e63', hair: '#5a2e8a', shirt: '#6b3a1f', pants: '#2a2a2a' },
     persona: `A senior and the morning barista at ${T.pcj} in Talley. Knows every regular's order and most of the gossip.`,
@@ -260,7 +279,7 @@ export const AGENTS: AgentDef[] = [
     dayGoals: ['Survive the morning rush.', 'Survive the morning rush.', 'Survive the morning rush.'],
     facts: [
       { id: 'sam_cow', text: `${T.howlingCow} scoops on the first floor, next to ${T.market}, use milk from the university dairy.` },
-      { id: 'sam_ears', text: 'If you whisper into the Wolf Ears by Leazar Hall, someone at the other ear hears you perfectly.' },
+      { id: 'sam_ears', text: 'If you whisper into the Wolf Ears in the Court of North Carolina, someone at the other ear hears you perfectly.' },
     ],
     gift: { id: 'cookie', label: 'a free day-old cookie', energy: 4, hunger: -8, stress: -3 },
     schedule: [{ from: h(7), to: h(15), mapId: 'talley1', spot: 'f1.pcj.staff', activity: `working the counter at ${T.pcj}` }],
@@ -281,6 +300,7 @@ export const AGENTS: AgentDef[] = [
     tier: 'supporting',
     role: `staff at the ${N.bldg.talley} information desk`,
     topics: ['all'],
+    gossip: 0.5,
     pronouns: 'he/him',
     colors: { skin: '#e8c4a0', hair: '#bdbdbd', shirt: '#9e1b1b', pants: '#30343c' },
     persona: `Has worked the ${N.bldg.talley} information desk for nineteen years. Knows the building better than its architects.`,
@@ -290,7 +310,7 @@ export const AGENTS: AgentDef[] = [
     dayGoals: ['Help whoever walks up.', 'Help whoever walks up.', 'Help whoever walks up.'],
     facts: [
       { id: 'walt_tunnel', text: `Anyone can paint the ${N.place.freeExpression}; ${T.market} sells tunnel-safe spray paint.` },
-      { id: 'walt_bus', text: `The ${N.bus.name} stops on Dunn Avenue right outside ${N.bldg.talley}, and it is free.` },
+      { id: 'walt_bus', text: `The ${N.bus.name} stops on Cates Avenue right outside ${N.bldg.talley}, and it is free.` },
       { id: 'walt_stewart', text: `${T.stewart} on the second floor shows free movies some weekend nights.` },
     ],
     schedule: [{ from: h(8), to: h(20), mapId: 'talley1', spot: 'f1.info.staff', activity: 'staffing the information desk' }],
@@ -320,3 +340,8 @@ export const CROWD_LINES = [
   'Is this booth taken? Never mind.',
   'Do you know where the club fair is?',
 ];
+
+/** Every fact by id, with the character it belongs to. */
+export const FACTS: Record<string, Fact & { owner: string }> = Object.fromEntries(
+  AGENTS.flatMap((a) => a.facts.map((f) => [f.id, { ...f, owner: a.id }])),
+);

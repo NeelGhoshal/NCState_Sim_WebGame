@@ -1,21 +1,22 @@
 // The rules engine. Owns time, meters, money, relationships and invitations.
 // Pure TypeScript: no DOM, no Phaser, no network. Mutates the GameState it is given.
-import { AGENTS, AGENT_BY_ID, ALL_INVITES, INVITE_OWNER, type InviteDef } from '../data/agents';
+import { AGENTS, AGENT_BY_ID, ALL_INVITES, FACTS, INVITE_OWNER, type InviteDef } from '../data/agents';
 import { VENUES, DINING_HALLS, type MenuItem, type Venue } from '../data/venues';
 import { MAPS } from '../maps/index';
 import { BUS_STOPS } from '../maps/campus';
 import { agentWhere } from './schedule';
 import { type GameState, DAY_END, DAYS, WAKE, PLAYER_CLASS, BUCKET } from './state';
 import type { Pt } from './types';
+import { type Ev, type Result, addMemory, changeRel, clamp, logEvent } from './util';
+import { factsKnownBy, gossipTick, learnFact } from './rumors';
 
-export interface Ev { kind: 'toast' | 'text' | 'feed' | 'invite' | 'passout' | 'bucket'; text: string }
-export interface Result { ok: boolean; msg: string; events: Ev[] }
+export { type Ev, type Result, addMemory, changeRel, clamp, logEvent } from './util';
+
 
 export const EXCHANGE_MIN = 5;
 export const TALK_RANGE = 2;
 export const BUS = { interval: 8, ride: 4, first: 7 * 60, last: 22 * 60, order: ['talley', 'fountain', 'belltower', 'quad'] };
 
-export const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const fail = (msg: string): Result => ({ ok: false, msg, events: [] });
 
 export function fmtTime(min: number): string {
@@ -25,22 +26,6 @@ export function fmtTime(min: number): string {
 }
 export const fmtMoney = (v: number) => `$${v.toFixed(2)}`;
 
-export function logEvent(s: GameState, text: string) { s.log.push({ day: s.day, minute: s.minute, text }); }
-
-export function changeRel(s: GameState, id: string, delta: number) {
-  const a = s.agents[id];
-  a.rel = clamp(Math.round(a.rel + delta), 0, 100);
-}
-
-export function addMemory(s: GameState, id: string, text: string, importance: number) {
-  const mem = s.agents[id].memories;
-  mem.push({ day: s.day, minute: s.minute, text: text.slice(0, 240), importance: clamp(Math.round(importance), 1, 10) });
-  while (mem.length > 40) {
-    let drop = 0;
-    for (let i = 1; i < mem.length; i++) if (mem[i].importance < mem[drop].importance) drop = i;
-    mem.splice(drop, 1);
-  }
-}
 
 function completeBucket(s: GameState, id: string, evs: Ev[]) {
   if (s.bucket[id]) return;
@@ -110,6 +95,7 @@ function tick(s: GameState, evs: Ev[]) {
     if (s.minute > inv.from && s.minute <= inv.to && nearSpot(s, inv.mapId, inv.spot, inv.radius)) st.presentMin++;
     if (s.minute === inv.to) finishInvite(s, inv, evs);
   }
+  gossipTick(s, evs);
 }
 
 /** Moves the clock forward minute by minute, updating meters and the world. */
@@ -331,7 +317,8 @@ export function allowedActions(s: GameState, id: string): Allowed {
   const argsFor: Record<string, string[]> = {};
   const invites = def.invites.filter((inv) => inviteOfferable(s, inv)).map((i) => i.id);
   if (invites.length) { actions.push('invite'); argsFor.invite = invites; }
-  const facts = def.facts.filter((f) => !a.shared.includes(f.id)).map((f) => f.id);
+  // Anything they know, their own or heard, that the player has not learned yet.
+  const facts = factsKnownBy(s, id).filter((f) => !a.shared.includes(f) && !s.knownFacts.includes(f));
   if (facts.length) { actions.push('share_info'); argsFor.share_info = facts; }
   if (def.gift && a.giftDay !== s.day) { actions.push('give'); argsFor.give = [def.gift.id]; }
   return { actions, argsFor };
@@ -369,10 +356,11 @@ export function applyAgentTurn(s: GameState, id: string, turn: AgentTurn): Appli
     out.inviteId = arg;
     out.notes.push(`${def.name.split(' ')[0]} invited you: ${inv.label}, ${fmtTime(inv.from)}.`);
   } else if (turn.action === 'share_info') {
-    const fact = def.facts.find((f) => f.id === arg)!;
+    const fact = FACTS[arg];
     a.shared.push(arg);
     s.notes.push(`${def.name.split(' ')[0]}: ${fact.text}`);
-    out.notes.push('Saved to Notes on your phone.');
+    learnFact(s, id, arg);
+    out.notes.push('Saved to Notes on your phone. You can pass it on in a conversation.');
   } else if (turn.action === 'give' && def.gift) {
     a.giftDay = s.day;
     s.energy = clamp(s.energy + def.gift.energy, 0, 100);

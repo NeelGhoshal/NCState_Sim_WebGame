@@ -1,5 +1,5 @@
 // Shared runtime context: the current game state and a tiny event bus.
-import type { GameState } from './engine/state';
+import { type GameState, migrate } from './engine/state';
 import { MAPS, START } from './maps/index';
 import { isSolid } from './engine/types';
 
@@ -43,7 +43,7 @@ export function loadSave(): GameState | null {
     // Saves from before the OpenStreetMap campus hold positions on the old, smaller map.
     const m = MAPS[s.mapId];
     if (!m || isSolid(m, s.x, s.y)) { s.mapId = START.mapId; s.x = START.x; s.y = START.y; }
-    return s;
+    return migrate(s);
   } catch {
     return null;
   }

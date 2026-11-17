@@ -2,6 +2,8 @@
 // the Python AI service (ai/), re-checks the result, and falls back to scripts on any
 // failure. Never applies state itself: callers pass results to the engine.
 import { AGENT_BY_ID, AGENTS, ALL_INVITES } from '../data/agents';
+import { factForPrompt } from '../engine/rumors';
+import { recallMemories } from '../engine/memory';
 import { N } from '../data/names';
 import { type AgentTurn, type Reflection, allowedActions, agentHere, fmtTime, upcoming } from '../engine/engine';
 import type { GameState } from '../engine/state';
@@ -52,7 +54,7 @@ export async function dialogueTurn(s: GameState, id: string, history: Line[], pl
       id, name: def.name, pronouns: def.pronouns, role: def.role, persona: def.persona, speech: def.speech,
       values: def.values, semesterGoal: def.semesterGoal, goal: a.goal, rel: a.rel, note: a.note,
       activity: here?.activity ?? 'around', minutesLeft: here ? here.endsAt - s.minute : 0,
-      memories: a.memories.slice(-8),
+      memories: recallMemories(a.memories, `${playerText} ${history.slice(-2).map((l) => l.text).join(' ')}`, s, 8),
       topics: def.topics,
     },
     allowed,
@@ -60,7 +62,7 @@ export async function dialogueTurn(s: GameState, id: string, history: Line[], pl
       const inv = ALL_INVITES.find((i) => i.id === iid)!;
       return { id: iid, label: inv.label, day: inv.day, start: inv.from };
     }),
-    facts: (allowed.argsFor.share_info ?? []).map((fid) => def.facts.find((f) => f.id === fid)!),
+    facts: (allowed.argsFor.share_info ?? []).map((fid) => ({ id: fid, text: factForPrompt(s, id, fid) })),
     gift: def.gift && allowed.argsFor.give ? { id: def.gift.id, label: def.gift.label } : null,
     history: history.slice(-12),
     playerText,

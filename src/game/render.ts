@@ -9,7 +9,7 @@ export const TS = 32;
 const GROUND: Record<Ground, string> = {
   void: '#111317', grass: '#6b9b52', sidewalk: '#d3ccbc', plaza: '#a65a45', roadH: '#4a4b51', roadV: '#4a4b51',
   roadX: '#4a4b51', crosswalk: '#4a4b51', rail: '#7b7266', tunnel: '#3a3a42', parking: '#8c8c8c', field: '#4e9a40',
-  water: '#4f86b8', site: '#a5845e', bldg: '#9a9a9a', door: '#8b5a2b', floor: '#ddd6c6', tile: '#e8e8e6',
+  water: '#4f86b8', site: '#a5845e', bldg: '#9a9a9a', door: '#8b5a2b', floor: '#e2dccf', tile: '#ebe8e1',
   carpet: '#6e7d9c', wood: '#bb8d5f', rug: '#9c3b3b', wall: '#2f3039', glass: '#9cc9e3', kitchen: '#a3a8ad',
   stage: '#5b3c2b', stairsUp: '#c9c2b3', stairsDown: '#b3ad9f', road: '#4a4c52', underpass: '#55565c',
 };
@@ -47,7 +47,7 @@ function drawGround(c: CanvasRenderingContext2D, g: Ground, x: number, y: number
   const n = noise(x, y);
   const grain = map.vectors ? 5 : 14;
   c.fillStyle = g === 'grass' || g === 'field' ? shade(base, (n - 0.5) * grain) : base;
-  c.fillRect(px, py, TS, TS);
+  if (g !== 'door') c.fillRect(px, py, TS, TS); // doors draw only their opening, over a wall or a building
   switch (g) {
     case 'sidewalk':
       c.strokeStyle = 'rgba(0,0,0,0.07)'; c.strokeRect(px + 0.5, py + 0.5, TS - 1, TS - 1); break;
@@ -92,15 +92,25 @@ function drawGround(c: CanvasRenderingContext2D, g: Ground, x: number, y: number
     case 'site':
       c.fillStyle = 'rgba(80,60,30,0.3)'; c.fillRect(px + n * 20, py + 6, 8, 5); c.fillRect(px + 4, py + 18 + n * 6, 10, 4); break;
     case 'tile':
-      if ((x + y) % 2 === 0) { c.fillStyle = '#d9d9d6'; c.fillRect(px, py, TS, TS); } break;
+      // Large stone slabs (two tiles each), a faint grout line, barely-there tone shifts
+      c.fillStyle = `rgba(120,110,95,${0.03 + n * 0.035})`; c.fillRect(px, py, TS, TS);
+      c.fillStyle = 'rgba(110,100,85,0.16)';
+      if (x % 2 === 0) c.fillRect(px, py, 1, TS);
+      if (y % 2 === 0) c.fillRect(px, py, TS, 1);
+      break;
     case 'floor':
-      c.strokeStyle = 'rgba(0,0,0,0.05)'; c.strokeRect(px + 0.5, py + 0.5, TS - 1, TS - 1); break;
+      c.fillStyle = `rgba(120,100,70,${0.02 + n * 0.03})`; c.fillRect(px, py, TS, TS);
+      c.fillStyle = 'rgba(110,95,70,0.12)'; c.fillRect(px, py + TS - 1, TS, 1); break;
     case 'carpet':
       c.fillStyle = 'rgba(255,255,255,0.04)'; if ((x + y) % 2) c.fillRect(px, py, TS, TS); break;
     case 'wood':
       c.strokeStyle = 'rgba(80,40,10,0.25)'; for (let k = 0; k < TS; k += 8) { c.beginPath(); c.moveTo(px, py + k + 0.5); c.lineTo(px + TS, py + k + 0.5); c.stroke(); } break;
     case 'wall':
-      c.fillStyle = '#3b3c47'; c.fillRect(px, py, TS, TS - 6); break;
+      // Seen from above: a lighter cap over the face
+      c.fillStyle = '#3d3e4a'; c.fillRect(px, py, TS, TS);
+      c.fillStyle = '#545565'; c.fillRect(px, py, TS, 6);
+      c.fillStyle = 'rgba(255,255,255,0.06)'; c.fillRect(px, py + 6, TS, 1);
+      break;
     case 'glass':
       c.fillStyle = '#c8e4f3'; c.fillRect(px + 3, py + 10, TS - 6, 4); break;
     case 'kitchen':
@@ -112,33 +122,93 @@ function drawGround(c: CanvasRenderingContext2D, g: Ground, x: number, y: number
       c.fillStyle = 'rgba(0,0,0,0.18)'; for (let k = 0; k < TS; k += 6) c.fillRect(px, py + k, TS, 2); break;
     case 'underpass':
       c.fillStyle = 'rgba(0,0,0,0.3)'; c.fillRect(px, py, TS, 4); c.fillRect(px, py + TS - 4, TS, 4); break;
-    case 'door':
-      c.fillStyle = '#a8743d'; c.fillRect(px + 2, py + 2, TS - 4, TS - 4); break;
+    case 'door': {
+      // A doorway on the side that opens onto walkable ground: a dark opening with a pale step
+      const open = (dx: number, dy: number) => {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= map.w || ny >= map.h) return false;
+        const g2 = map.ground[ny * map.w + nx];
+        return g2 !== 'bldg' && g2 !== 'wall' && g2 !== 'door' && g2 !== 'void' && g2 !== 'glass';
+      };
+      const dirs: [number, number][] = [[0, 1], [0, -1], [1, 0], [-1, 0]];
+      const [dx, dy] = dirs.find(([a, b]) => open(a, b)) ?? [0, 1];
+      if (!map.vectors) { c.fillStyle = GROUND.floor; c.fillRect(px, py, TS, TS); }
+      c.fillStyle = '#2b211b';
+      if (dy) c.fillRect(px + 6, dy > 0 ? py + TS - 12 : py, TS - 12, 12);
+      else c.fillRect(dx > 0 ? px + TS - 12 : px, py + 6, 12, TS - 12);
+      c.fillStyle = '#d8cfbd';
+      if (dy) c.fillRect(px + 4, dy > 0 ? py + TS - 3 : py, TS - 8, 3);
+      else c.fillRect(dx > 0 ? px + TS - 3 : px, py + 4, 3, TS - 8);
+      break;
+    }
     default: break;
   }
 }
 
-function drawObj(c: CanvasRenderingContext2D, o: Obj, x: number, y: number) {
+function drawObj(c: CanvasRenderingContext2D, o: Obj, x: number, y: number, map: GameMap) {
   const px = x * TS, py = y * TS;
+  /** Same object next door, so runs of tables and counters draw as one piece. */
+  const same = (dx: number, dy: number) => {
+    const nx = x + dx, ny = y + dy;
+    return nx >= 0 && ny >= 0 && nx < map.w && ny < map.h && map.obj[ny * map.w + nx] === o;
+  };
+  /** A rounded box that joins its neighbours on the left and right, with a soft shadow. */
+  const piece = (top: number, h: number, fill: string, edge: string, r = 5) => {
+    const l = same(-1, 0), rt = same(1, 0);
+    const x0 = px + (l ? 0 : 2), x1 = px + TS - (rt ? 0 : 2);
+    const radii = [l ? 0 : r, rt ? 0 : r, rt ? 0 : r, l ? 0 : r];
+    c.fillStyle = 'rgba(40,30,20,0.18)'; c.beginPath(); c.roundRect(x0 + 1, py + top + 3, x1 - x0, h, radii); c.fill();
+    c.fillStyle = fill; c.beginPath(); c.roundRect(x0, py + top, x1 - x0, h, radii); c.fill();
+    c.fillStyle = edge; c.fillRect(x0 + (l ? 0 : 2), py + top + h - 3, x1 - x0 - (l ? 0 : 2) - (rt ? 0 : 2), 3);
+  };
   switch (o) {
-    case 'tree':
-      c.fillStyle = 'rgba(0,0,0,0.2)'; c.beginPath(); c.ellipse(px + 17, py + 22, 12, 7, 0, 0, Math.PI * 2); c.fill();
-      c.fillStyle = '#2f6b31'; c.beginPath(); c.arc(px + 16, py + 14, 12, 0, Math.PI * 2); c.fill();
-      c.fillStyle = '#3f8a3e'; c.beginPath(); c.arc(px + 13, py + 11, 6, 0, Math.PI * 2); c.fill(); break;
+    case 'tree': {
+      // The crown varies a little per tree so rows of trees do not look stamped
+      const v = noise(x * 3, y * 5);
+      const r = 12 + v * 3;
+      c.fillStyle = 'rgba(20,40,15,0.22)'; c.beginPath(); c.ellipse(px + 19, py + 23, r, r * 0.55, 0, 0, Math.PI * 2); c.fill();
+      c.fillStyle = v > 0.5 ? '#2e6a33' : '#2a6230'; c.beginPath(); c.arc(px + 16, py + 14, r, 0, Math.PI * 2); c.fill();
+      c.fillStyle = v > 0.5 ? '#3c8441' : '#377a3b'; c.beginPath(); c.arc(px + 13, py + 11, r * 0.62, 0, Math.PI * 2); c.fill();
+      c.fillStyle = 'rgba(255,255,220,0.12)'; c.beginPath(); c.arc(px + 11, py + 8, r * 0.3, 0, Math.PI * 2); c.fill();
+      break;
+    }
     case 'fence':
       c.strokeStyle = '#e0a020'; c.lineWidth = 3; c.strokeRect(px + 4, py + 4, TS - 8, TS - 8);
       c.strokeStyle = '#333'; c.lineWidth = 1; c.beginPath(); c.moveTo(px + 4, py + 4); c.lineTo(px + TS - 4, py + TS - 4); c.stroke(); break;
-    case 'counter':
-      c.fillStyle = '#6e4325'; c.fillRect(px, py + 2, TS, TS - 4); c.fillStyle = '#9a6a43'; c.fillRect(px, py + 2, TS, 7); break;
-    case 'table':
-      c.fillStyle = '#7b4f2c'; c.fillRect(px + 2, py + 4, TS - 4, TS - 8); c.fillStyle = '#9b6a42'; c.fillRect(px + 2, py + 4, TS - 4, 4); break;
-    case 'seatN': case 'seatS':
-      c.fillStyle = '#8f2525'; c.fillRect(px + 1, o === 'seatN' ? py + 2 : py + 14, TS - 2, 16);
-      c.fillStyle = '#b53a3a'; c.fillRect(px + 3, o === 'seatN' ? py + 14 : py + 6, TS - 6, 12); break;
+    case 'counter': {
+      piece(3, TS - 6, '#8a5b37', '#6a4227', 4);
+      const l = same(-1, 0) ? 0 : 4, r = same(1, 0) ? 0 : 4;
+      c.fillStyle = 'rgba(255,240,220,0.18)'; c.fillRect(px + l, py + 5, TS - l - r, 3);
+      break;
+    }
+    case 'table': {
+      piece(6, TS - 12, '#a5754b', '#7f5532', 6);
+      const l = same(-1, 0) ? 0 : 5, r = same(1, 0) ? 0 : 5;
+      c.fillStyle = 'rgba(255,235,210,0.16)'; c.fillRect(px + l, py + 8, TS - l - r, 2);
+      break;
+    }
+    case 'seatN': case 'seatS': {
+      // Booth bench: a high back away from the table, a cushion toward it
+      const back = o === 'seatN' ? py + 2 : py + TS - 10;
+      const seat = o === 'seatN' ? py + 10 : py + 4;
+      const l = same(-1, 0) ? 0 : 2, r = same(1, 0) ? 0 : 2;
+      c.fillStyle = '#7d2323'; c.beginPath(); c.roundRect(px + l, back, TS - l - r, 8, 3); c.fill();
+      c.fillStyle = '#a83434'; c.beginPath(); c.roundRect(px + l + 1, seat, TS - l - r - 2, 16, 4); c.fill();
+      c.fillStyle = 'rgba(255,255,255,0.12)'; c.fillRect(px + l + 3, seat + 2, TS - l - r - 6, 2);
+      break;
+    }
     case 'chair':
-      c.fillStyle = '#4b4b55'; c.fillRect(px + 9, py + 9, 14, 14); break;
-    case 'sofa':
-      c.fillStyle = '#3d4d7a'; c.fillRect(px, py + 6, TS, 20); c.fillStyle = '#566aa3'; c.fillRect(px + 2, py + 10, TS - 4, 12); break;
+      c.fillStyle = 'rgba(40,30,20,0.16)'; c.beginPath(); c.roundRect(px + 9, py + 11, 15, 15, 4); c.fill();
+      c.fillStyle = '#5d6170'; c.beginPath(); c.roundRect(px + 8, py + 9, 16, 15, 4); c.fill();
+      c.fillStyle = '#767b8c'; c.beginPath(); c.roundRect(px + 10, py + 11, 12, 9, 3); c.fill();
+      break;
+    case 'sofa': {
+      const l = same(-1, 0) ? 0 : 1, r = same(1, 0) ? 0 : 1;
+      c.fillStyle = '#34446e'; c.beginPath(); c.roundRect(px + l, py + 5, TS - l - r, 22, 5); c.fill();
+      c.fillStyle = '#4f6299'; c.beginPath(); c.roundRect(px + l + 2, py + 11, TS - l - r - 4, 13, 4); c.fill();
+      c.fillStyle = 'rgba(255,255,255,0.1)'; c.fillRect(px + l + 4, py + 13, TS - l - r - 8, 2);
+      break;
+    }
     case 'shelf': {
       c.fillStyle = '#5d4227'; c.fillRect(px, py + 4, TS, TS - 8);
       const cols = ['#c0392b', '#2980b9', '#f39c12', '#27ae60', '#ecf0f1'];
@@ -147,9 +217,13 @@ function drawObj(c: CanvasRenderingContext2D, o: Obj, x: number, y: number) {
     }
     case 'fridge':
       c.fillStyle = '#e8f1f7'; c.fillRect(px + 1, py + 1, TS - 2, TS - 2); c.fillStyle = '#9fc6df'; c.fillRect(px + 4, py + 4, TS - 8, TS - 14); break;
-    case 'plant':
-      c.fillStyle = '#7a4a2a'; c.fillRect(px + 10, py + 18, 12, 10);
-      c.fillStyle = '#3b8a3a'; c.beginPath(); c.arc(px + 16, py + 13, 9, 0, Math.PI * 2); c.fill(); break;
+    case 'plant': {
+      c.fillStyle = 'rgba(40,30,20,0.18)'; c.beginPath(); c.ellipse(px + 17, py + 27, 8, 3, 0, 0, Math.PI * 2); c.fill();
+      c.fillStyle = '#b5764a'; c.beginPath(); c.roundRect(px + 10, py + 18, 12, 9, [2, 2, 4, 4]); c.fill();
+      const leaves: [number, number, number, string][] = [[-4, -1, 6, '#2f7a3a'], [4, -2, 6, '#2f7a3a'], [0, -6, 6.5, '#3d9147'], [0, -1, 5, '#4ea457']];
+      for (const [ox, oy, r, col] of leaves) { c.fillStyle = col; c.beginPath(); c.arc(px + 16 + ox, py + 15 + oy, r, 0, Math.PI * 2); c.fill(); }
+      break;
+    }
     case 'aud':
       for (let k = 0; k < 2; k++) { c.fillStyle = '#7c1f1f'; c.fillRect(px + 2 + k * 15, py + 6, 13, 20); c.fillStyle = '#a33'; c.fillRect(px + 4 + k * 15, py + 8, 9, 10); }
       break;
@@ -183,7 +257,41 @@ function outlinedText(c: CanvasRenderingContext2D, text: string, x: number, y: n
 // ---------------------------------------------------------------- vector maps
 
 interface Box { x0: number; y0: number; x1: number; y1: number }
-type PBuilding = BuildingMeta & { b: Box; lx: number; ly: number };
+/** A wall that faces the viewer: its base edge in pixels and how much it turns east (-1..1). */
+interface Wall { ax: number; ay: number; bx: number; by: number; turn: number; mid: number }
+type PBuilding = BuildingMeta & { b: Box; lx: number; ly: number; h: number; walls: Wall[] };
+
+/** Pixels of height per floor, and the cap, so tall towers overlap the walk north of them by
+ * at most about two tiles. The camera looks from the south: roofs shift up, south walls show. */
+export const LEVEL_PX = 7;
+export const MAX_HEIGHT_PX = 72;
+
+/** Even-odd point-in-polygon on a flat [x0,y0,x1,y1,...] list. */
+function insidePoly(x: number, y: number, p: number[]) {
+  let inside = false;
+  for (let i = 0, j = p.length - 2; i < p.length; j = i, i += 2) {
+    const xi = p[i], yi = p[i + 1], xj = p[j], yj = p[j + 1];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** The walls of a footprint that face south, so the viewer can see them. */
+function southWalls(p: number[]): Wall[] {
+  const out: Wall[] = [];
+  for (let i = 0; i < p.length; i += 2) {
+    const j = (i + 2) % p.length;
+    const ax = p[i], ay = p[i + 1], bx = p[j], by = p[j + 1];
+    const len = Math.hypot(bx - ax, by - ay);
+    if (len < 0.05) continue;
+    let nx = -(by - ay) / len, ny = (bx - ax) / len;
+    const mx = (ax + bx) / 2, my = (ay + by) / 2;
+    if (insidePoly(mx + nx * 0.05, my + ny * 0.05, p)) { nx = -nx; ny = -ny; }
+    if (ny <= 0.08) continue;
+    out.push({ ax: ax * TS, ay: ay * TS, bx: bx * TS, by: by * TS, turn: nx, mid: my });
+  }
+  return out.sort((a, b) => a.mid - b.mid);
+}
 interface Prepared {
   lines: (MapLine & { b: Box })[];
   areas: (MapArea & { b: Box })[];
@@ -218,10 +326,12 @@ function prepare(map: GameMap): Prepared {
   const v = map.vectors!;
   const lines = v.lines.map((l) => ({ ...l, b: boxOf(l.p) }));
   const areas = v.areas.map((a) => ({ ...a, b: boxOf(a.p) }));
-  const buildings = map.buildings.map((m) => {
+  const buildings = map.buildings.slice().sort((p, q) => (p.y + p.h) - (q.y + q.h)).map((m) => {
     const b = m.poly ? boxOf(m.poly) : { x0: m.x, y0: m.y, x1: m.x + m.w, y1: m.y + m.h };
     const lp = m.poly ? labelPoint(m.poly, b) : { x: m.x + m.w / 2, y: m.y + m.h / 2 };
-    return { ...m, b, lx: lp.x, ly: lp.y };
+    const h = Math.min(MAX_HEIGHT_PX, (m.levels ?? 2) * LEVEL_PX);
+    const walls = m.poly ? southWalls(m.poly) : [];
+    return { ...m, b, lx: lp.x, ly: lp.y - h / TS, h, walls };
   });
   // Street names go on the longest straight stretches, at least 70 tiles apart per name.
   const segs: { name: string; x: number; y: number; a: number; len: number }[] = [];
@@ -313,28 +423,111 @@ function drawLines(c: CanvasRenderingContext2D, ls: Prepared['lines'], overview:
   c.setLineDash([]);
 }
 
+/** Air handlers and stair housings on big roofs: small boxes with their own south face. */
+function drawRooftop(c: CanvasRenderingContext2D, m: PBuilding) {
+  if (!m.poly || m.style === 'parking' || m.style === 'closed') return;
+  const area = (m.b.x1 - m.b.x0) * (m.b.y1 - m.b.y0);
+  if (area < 50) return;
+  const count = area > 400 ? 3 : area > 150 ? 2 : 1;
+  const cx = (m.b.x0 + m.b.x1) / 2, cy = (m.b.y0 + m.b.y1) / 2;
+  for (let i = 0; i < count; i++) {
+    // Spread along the long side, nudged by a stable per-building value
+    const v = noise(Math.round(cx * 7) + i, Math.round(cy * 5));
+    const along = (i - (count - 1) / 2) * 0.28 + (v - 0.5) * 0.12;
+    const wide = m.b.x1 - m.b.x0 >= m.b.y1 - m.b.y0;
+    const tx = wide ? cx + along * (m.b.x1 - m.b.x0) : cx + (v - 0.5) * 2;
+    const ty = wide ? cy + (v - 0.5) * 2 + 1.2 : cy + along * (m.b.y1 - m.b.y0);
+    const w = 12 + v * 8, h = 9 + v * 4, rise = 4;
+    const x = tx * TS - w / 2, y = ty * TS - h / 2;
+    // Keep the whole box on the roof
+    if (![[x, y], [x + w, y], [x, y + h], [x + w, y + h]].every(([px, py]) => insidePoly(px / TS, py / TS, m.poly!))) continue;
+    c.fillStyle = 'rgba(0,0,0,0.18)'; c.fillRect(x + 3, y + 3, w, h);
+    c.fillStyle = '#8b8d93'; c.fillRect(x, y + h - rise, w, rise);
+    c.fillStyle = '#b9bcc2'; c.fillRect(x, y - rise, w, h);
+    c.strokeStyle = 'rgba(40,40,48,0.55)'; c.lineWidth = 1; c.strokeRect(x + 0.5, y - rise + 0.5, w - 1, h + rise - 1);
+    c.fillStyle = 'rgba(60,62,70,0.45)'; c.fillRect(x + 3, y - rise + 2, w - 6, 1.2); c.fillRect(x + 3, y - rise + 5, w - 6, 1.2);
+  }
+}
+
+/** The ground shadow, drawn for every building before any walls so it never covers one. */
+function drawBuildingShadow(c: CanvasRenderingContext2D, m: PBuilding) {
+  if (!m.poly) return;
+  // Sun from the north-west: longer shadows for taller buildings, falling south-east
+  const sx = 3 + m.h * 0.45, sy = 4 + m.h * 0.2;
+  c.save(); c.translate(sx, sy); tracePoly(c, m.poly); c.restore();
+  c.fillStyle = 'rgba(20,28,16,0.26)'; c.fill();
+}
+
 function drawBuilding(c: CanvasRenderingContext2D, m: PBuilding, overview: boolean) {
   const [fill, edge] = STYLE[m.style];
-  const trace = () => { if (m.poly) tracePoly(c, m.poly); else { c.beginPath(); c.rect(m.x * TS, m.y * TS, m.w * TS, m.h * TS); } };
-  c.save();
-  c.translate(overview ? 3 : 5, overview ? 4 : 7); trace(); c.fillStyle = 'rgba(25,30,20,0.28)'; c.fill();
-  c.restore();
-  trace(); c.fillStyle = fill; c.fill();
-  if (!overview) {
-    c.save(); trace(); c.clip();
-    if (BRICK.has(m.style)) {
-      c.strokeStyle = 'rgba(60,20,10,0.13)'; c.lineWidth = 1;
-      for (let y = Math.floor((m.b.y0 * TS) / 6) * 6; y < m.b.y1 * TS; y += 6) { c.beginPath(); c.moveTo(m.b.x0 * TS, y + 0.5); c.lineTo(m.b.x1 * TS, y + 0.5); c.stroke(); }
-    } else if (m.style === 'closed') {
-      c.strokeStyle = 'rgba(30,20,10,0.25)'; c.lineWidth = 3;
-      const h = (m.b.y1 - m.b.y0) * TS;
-      for (let k = m.b.x0 * TS - h; k < m.b.x1 * TS; k += 14) { c.beginPath(); c.moveTo(k, m.b.y1 * TS); c.lineTo(k + h, m.b.y0 * TS); c.stroke(); }
-    }
-    // A lighter roof band inside the edge
-    trace(); c.strokeStyle = shade(fill, 24); c.lineWidth = 8; c.stroke();
-    c.restore();
+  if (!m.poly) {
+    c.fillStyle = fill; c.fillRect(m.x * TS, m.y * TS, m.w * TS, m.h * TS);
+    return;
   }
-  trace(); c.strokeStyle = edge; c.lineWidth = overview ? 2 : 2.5; c.lineJoin = 'round'; c.stroke();
+  const H = m.h;
+  const brick = BRICK.has(m.style);
+
+  // Walls: each south-facing edge rises H pixels. Walls turned east catch the light.
+  for (const w of m.walls) {
+    const quad = () => {
+      c.beginPath(); c.moveTo(w.ax, w.ay); c.lineTo(w.bx, w.by); c.lineTo(w.bx, w.by - H); c.lineTo(w.ax, w.ay - H); c.closePath();
+    };
+    quad(); c.fillStyle = shade(fill, -34 + w.turn * 16); c.fill();
+    if (!overview && H >= 6) {
+      c.save(); quad(); c.clip();
+      const dx = w.bx - w.ax, dy = w.by - w.ay, len = Math.hypot(dx, dy);
+      const ux = dx / len, uy = dy / len;
+      if (brick) {
+        // Brick courses follow the wall
+        c.strokeStyle = 'rgba(40,12,6,0.16)'; c.lineWidth = 1;
+        for (let k = 2; k < H; k += 3) { c.beginPath(); c.moveTo(w.ax, w.ay - k); c.lineTo(w.bx, w.by - k); c.stroke(); }
+      }
+      if (m.style === 'parking') {
+        // Open decks: a dark band on every level
+        c.strokeStyle = 'rgba(25,25,30,0.55)'; c.lineWidth = 2.4;
+        for (let lv = 0; lv < H / LEVEL_PX; lv++) { const k = lv * LEVEL_PX + 2.5; c.beginPath(); c.moveTo(w.ax, w.ay - k); c.lineTo(w.bx, w.by - k); c.stroke(); }
+      } else if (len > 10) {
+        // A row of windows per floor, set in from the corners
+        c.lineCap = 'butt';
+        const levels = Math.max(1, Math.round(H / LEVEL_PX));
+        for (let lv = 0; lv < levels; lv++) {
+          const k = lv * LEVEL_PX + 2.7;
+          for (let t = 4; t + 4 < len - 3; t += 7.5) {
+            const x0 = w.ax + ux * t, y0 = w.ay + uy * t - k;
+            c.strokeStyle = 'rgba(28,36,52,0.62)'; c.lineWidth = 2.4;
+            c.beginPath(); c.moveTo(x0, y0); c.lineTo(x0 + ux * 4, y0 + uy * 4); c.stroke();
+            c.strokeStyle = 'rgba(170,200,230,0.28)'; c.lineWidth = 0.8;
+            c.beginPath(); c.moveTo(x0, y0 - 0.8); c.lineTo(x0 + ux * 4, y0 + uy * 4 - 0.8); c.stroke();
+          }
+        }
+        c.lineCap = 'round';
+      }
+      // Ground contact and the top edge
+      c.fillStyle = 'rgba(0,0,0,0.12)';
+      c.beginPath(); c.moveTo(w.ax, w.ay); c.lineTo(w.bx, w.by); c.lineTo(w.bx, w.by - 2); c.lineTo(w.ax, w.ay - 2); c.closePath(); c.fill();
+      c.restore();
+    }
+    quad(); c.strokeStyle = shade(edge, -10); c.lineWidth = overview ? 1.5 : 1.2; c.lineJoin = 'round'; c.stroke();
+  }
+
+  // Roof: the footprint lifted by H
+  c.save(); c.translate(0, -H);
+  tracePoly(c, m.poly); c.fillStyle = shade(fill, 6); c.fill();
+  if (!overview) {
+    c.save(); tracePoly(c, m.poly); c.clip();
+    if (m.style === 'closed') {
+      c.strokeStyle = 'rgba(30,20,10,0.25)'; c.lineWidth = 3;
+      const span = (m.b.y1 - m.b.y0) * TS;
+      for (let k = m.b.x0 * TS - span; k < m.b.x1 * TS; k += 14) { c.beginPath(); c.moveTo(k, m.b.y1 * TS); c.lineTo(k + span, m.b.y0 * TS); c.stroke(); }
+    }
+    // A parapet: a lighter band just inside the roof edge, and a soft inner shade
+    tracePoly(c, m.poly); c.strokeStyle = shade(fill, 30); c.lineWidth = 6; c.stroke();
+    tracePoly(c, m.poly); c.strokeStyle = 'rgba(0,0,0,0.08)'; c.lineWidth = 14; c.stroke();
+    c.restore();
+    drawRooftop(c, m);
+  }
+  tracePoly(c, m.poly); c.strokeStyle = edge; c.lineWidth = overview ? 2 : 2; c.lineJoin = 'round'; c.stroke();
+  c.restore();
 }
 
 const LABEL_FONT = "'Segoe UI Semibold', 'Helvetica Neue', system-ui, sans-serif";
@@ -368,15 +561,23 @@ export function renderRegion(map: GameMap, x0: number, y0: number, w: number, h:
   c.scale(scale, scale);
   c.translate(-x0 * TS, -y0 * TS);
   const overview = scale < 0.5;
-  const tx0 = Math.max(0, x0), ty0 = Math.max(0, y0), tx1 = Math.min(map.w, x0 + w), ty1 = Math.min(map.h, y0 + h);
+  const tx0 = Math.max(0, Math.floor(x0)), ty0 = Math.max(0, Math.floor(y0));
+  const tx1 = Math.min(map.w, Math.ceil(x0 + w)), ty1 = Math.min(map.h, Math.ceil(y0 + h));
   const tiles = (fn: (x: number, y: number, i: number) => void) => {
     for (let y = ty0; y < ty1; y++) for (let x = tx0; x < tx1; x++) fn(x, y, y * map.w + x);
   };
 
   if (!map.vectors) {
     tiles((x, y, i) => drawGround(c, map.ground[i], x, y, map));
+    // Walls cast a short shadow onto the floor below them
+    tiles((x, y, i) => {
+      if (y === 0 || map.ground[i] === 'wall' || map.ground[i - map.w] !== 'wall') return;
+      const g = c.createLinearGradient(0, y * TS, 0, y * TS + 10);
+      g.addColorStop(0, 'rgba(30,25,20,0.22)'); g.addColorStop(1, 'rgba(30,25,20,0)');
+      c.fillStyle = g; c.fillRect(x * TS, y * TS, TS, 10);
+    });
     drawRectBuildings(c, map);
-    tiles((x, y, i) => { const o = map.obj[i]; if (o) drawObj(c, o, x, y); });
+    tiles((x, y, i) => { const o = map.obj[i]; if (o) drawObj(c, o, x, y, map); });
     drawLabels(c, map, { x0: -Infinity, y0: -Infinity, x1: Infinity, y1: Infinity });
     return canvas;
   }
@@ -407,12 +608,15 @@ export function renderRegion(map: GameMap, x0: number, y0: number, w: number, h:
   }
   drawLines(c, P.lines.filter((l) => hits(l.b, view)), overview);
 
-  const bs = P.buildings.filter((m) => hits(m.b, view));
+  // Roofs rise above the footprint, so look a little further south for buildings that reach in.
+  const tall: Box = { ...view, y1: view.y1 + MAX_HEIGHT_PX / TS };
+  const bs = P.buildings.filter((m) => hits(m.b, tall));
+  for (const m of bs) drawBuildingShadow(c, m);
   for (const m of bs) drawBuilding(c, m, overview);
   if (!overview) tiles((x, y, i) => {
     if (map.ground[i] === 'door') drawGround(c, 'door', x, y, map);
     const o = map.obj[i];
-    if (o) drawObj(c, o, x, y);
+    if (o) drawObj(c, o, x, y, map);
   });
 
   c.textAlign = 'center'; c.textBaseline = 'middle';
@@ -479,16 +683,79 @@ function drawLabels(c: CanvasRenderingContext2D, map: GameMap, view: Box) {
 
 export interface PersonColors { skin: string; hair: string; shirt: string; pants: string }
 
-/** A 32x32 top-down person. */
-export function renderPerson(col: PersonColors, highlight = false): HTMLCanvasElement {
+export type Facing = 'down' | 'up' | 'side';
+export const FACINGS: Facing[] = ['down', 'up', 'side'];
+/** 0 = standing, 1 and 2 = the two steps of a walk. */
+export const FRAMES = [0, 1, 2] as const;
+
+const INK = 'rgba(28,20,16,0.85)';
+
+/**
+ * A 32x32 top-down person, three-quarter view, with an ink outline so it reads on any floor.
+ * `side` faces right; flip it for left.
+ */
+export function renderPerson(col: PersonColors, facing: Facing = 'down', frame = 0): HTMLCanvasElement {
   const cv = document.createElement('canvas');
   cv.width = TS; cv.height = TS;
   const c = cv.getContext('2d')!;
-  c.fillStyle = 'rgba(0,0,0,0.25)'; c.beginPath(); c.ellipse(16, 28, 9, 4, 0, 0, Math.PI * 2); c.fill();
-  c.fillStyle = col.pants; c.fillRect(11, 20, 4, 8); c.fillRect(17, 20, 4, 8);
-  c.fillStyle = col.shirt; c.beginPath(); c.roundRect(9, 11, 14, 12, 4); c.fill();
-  c.fillStyle = col.skin; c.beginPath(); c.arc(16, 9, 6, 0, Math.PI * 2); c.fill();
-  c.fillStyle = col.hair; c.beginPath(); c.arc(16, 7, 6, Math.PI, Math.PI * 2); c.fill(); c.fillRect(10, 6, 12, 2);
-  if (highlight) { c.strokeStyle = '#ffd34d'; c.lineWidth = 2; c.beginPath(); c.arc(16, 16, 14, 0, Math.PI * 2); c.stroke(); }
+  const step = frame === 0 ? 0 : frame === 1 ? 1 : -1;
+  const bob = frame === 0 ? 0 : -1;
+  const shape = (draw: () => void, fill: string) => { draw(); c.fillStyle = fill; c.fill(); c.lineWidth = 1.5; c.strokeStyle = INK; c.stroke(); };
+  const rr = (x: number, y: number, w: number, h: number, r: number) => () => { c.beginPath(); c.roundRect(x, y + bob, w, h, r); };
+
+  // Shadow
+  c.fillStyle = 'rgba(0,0,0,0.22)'; c.beginPath(); c.ellipse(16, 28.5, 8.5, 3.2, 0, 0, Math.PI * 2); c.fill();
+
+  // Legs: they swing opposite each other while walking
+  const pants = col.pants;
+  if (facing === 'side') {
+    shape(rr(13 + step * 2, 21, 4, 7, 2), shade(pants, -12));
+    shape(rr(15 - step * 2, 21, 4, 7, 2), pants);
+  } else {
+    shape(rr(11.5, 21 - Math.max(0, step), 4, 7, 2), pants);
+    shape(rr(16.5, 21 - Math.max(0, -step), 4, 7, 2), pants);
+  }
+
+  // Arms behind the body when facing away, in front otherwise
+  const arm = (x: number, swing: number) => shape(rr(x, 13 + swing, 3.5, 8, 1.75), shade(col.shirt, -18));
+  if (facing === 'side') arm(13.5 - step * 1.5, 0);
+  else { arm(7.5, facing === 'down' ? -step : step); arm(21, facing === 'down' ? step : -step); }
+
+  // Torso
+  shape(rr(9.5, 12, 13, 11, 4.5), col.shirt);
+  c.fillStyle = 'rgba(255,255,255,0.14)'; c.beginPath(); c.roundRect(11, 13 + bob, 10, 3, 1.5); c.fill();
+  if (facing === 'side') arm(15 + step * 1.5, 0);
+
+  // Head and hair
+  const hx = facing === 'side' ? 17 : 16, hy = 8 + bob;
+  shape(() => { c.beginPath(); c.arc(hx, hy, 6.2, 0, Math.PI * 2); }, col.skin);
+  c.fillStyle = col.hair;
+  c.beginPath();
+  if (facing === 'up') c.arc(hx, hy, 6.4, 0, Math.PI * 2);
+  else if (facing === 'side') { c.arc(hx - 0.5, hy - 0.5, 6.4, Math.PI * 0.75, Math.PI * 1.95); c.lineTo(hx - 6, hy + 3); }
+  else { c.arc(hx, hy - 0.5, 6.4, Math.PI * 1.02, Math.PI * 1.98); c.quadraticCurveTo(hx, hy - 3, hx - 6.3, hy - 1); }
+  c.fill(); c.lineWidth = 1.5; c.strokeStyle = INK; c.stroke();
+  c.fillStyle = 'rgba(255,255,255,0.18)'; c.beginPath(); c.ellipse(hx - 2, hy - 4, 2.2, 1.1, -0.4, 0, Math.PI * 2); c.fill();
+
+  // Face
+  c.fillStyle = '#1d1612';
+  if (facing === 'down') { c.fillRect(hx - 2.8, hy + 0.8, 1.6, 2); c.fillRect(hx + 1.2, hy + 0.8, 1.6, 2); }
+  else if (facing === 'side') c.fillRect(hx + 2.6, hy + 0.6, 1.6, 2);
+  return cv;
+}
+
+/** A small rounded name tag, drawn once per name. */
+export function renderTag(text: string, accent: string): HTMLCanvasElement {
+  const probe = document.createElement('canvas').getContext('2d')!;
+  const font = `600 11px ${LABEL_FONT}`;
+  probe.font = font;
+  const w = Math.ceil(probe.measureText(text).width) + 16, h = 17;
+  const cv = document.createElement('canvas');
+  cv.width = w * 2; cv.height = h * 2;
+  const c = cv.getContext('2d')!;
+  c.scale(2, 2);
+  c.fillStyle = 'rgba(22,22,28,0.82)'; c.beginPath(); c.roundRect(0.5, 0.5, w - 1, h - 1, 8); c.fill();
+  c.fillStyle = accent; c.beginPath(); c.arc(8, h / 2, 2.5, 0, Math.PI * 2); c.fill();
+  c.font = font; c.fillStyle = '#f4f1ea'; c.textBaseline = 'middle'; c.fillText(text, 13, h / 2 + 0.5);
   return cv;
 }

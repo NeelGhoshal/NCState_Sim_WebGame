@@ -1,5 +1,6 @@
 import { ctx, bus, save } from '../core';
-import { AGENT_BY_ID, ALL_INVITES, INVITE_OWNER } from '../data/agents';
+import { AGENT_BY_ID, ALL_INVITES, FACTS, INVITE_OWNER } from '../data/agents';
+import { tellable, tellFact } from '../engine/rumors';
 import {
   talkCheck, startConversation, spendExchange, applyAgentTurn, respondInvite, fmtTime, EXCHANGE_MIN,
 } from '../engine/engine';
@@ -17,6 +18,7 @@ interface Conv {
   replies: string[];
   over: boolean;
   lastSource: Source | null;
+  telling: boolean;
 }
 
 let conv: Conv | null = null;
@@ -27,7 +29,7 @@ export function openDialogue(id: string) {
   if (reason) { toast(reason, 'warn'); return; }
   startConversation(s, id);
   const def = AGENT_BY_ID[id];
-  conv = { id, lines: [{ who: 'agent', text: fallbackGreeting(s, id) }], exchange: 0, busy: false, replies: def.replies.slice(), over: false, lastSource: null };
+  conv = { id, lines: [{ who: 'agent', text: fallbackGreeting(s, id) }], exchange: 0, busy: false, replies: def.replies.slice(), over: false, lastSource: null, telling: false };
   setModal('dialogue', true);
   render();
   bus.emit('state');
@@ -46,7 +48,21 @@ function dialogueLines(): Line[] {
   return (conv?.lines ?? []).filter((l): l is Line => l.who !== 'system');
 }
 
-async function send(text: string) {
+/** Pass on something the player learned. The engine records it; the line goes to the model as speech. */
+function tell(factId: string) {
+  const s = ctx.state!;
+  if (!conv || conv.busy || conv.over) return;
+  const f = FACTS[factId];
+  // If they have to leave, send() ends the conversation and nothing is passed on.
+  if (talkCheck(s, conv.id)) { void send(f.text); return; }
+  const r = tellFact(s, conv.id, factId);
+  conv.telling = false;
+  if (!r.ok) { conv.lines.push({ who: 'system', text: r.msg }); render(); return; }
+  const said = `Did you hear this? ${f.text}`;
+  void send(said, r.msg);
+}
+
+async function send(text: string, note?: string) {
   const s = ctx.state!;
   if (!conv || conv.busy || conv.over) return;
   text = text.trim().slice(0, 300);
@@ -60,6 +76,7 @@ async function send(text: string) {
   }
   const history = dialogueLines();
   c.lines.push({ who: 'player', text });
+  if (note) c.lines.push({ who: 'system', text: note });
   handleEvents(spendExchange(s, c.id));
   if (conv !== c) return; // the night started (2 AM) and closed the dialogue
   c.busy = true;
@@ -114,6 +131,7 @@ function render() {
     <div class="transcript"></div>
     <div class="invites"></div>
     <div class="replies"></div>
+    <div class="tell"></div>
     <form class="say"><input maxlength="300" placeholder="${c.over ? 'The conversation is over.' : 'Say something…'}" ${c.over || c.busy ? 'disabled' : ''}/>
       <button ${c.over || c.busy ? 'disabled' : ''}>Say</button><button type="button" class="leave">Leave</button></form>
   </div>`);
@@ -141,6 +159,24 @@ function render() {
       rep.appendChild(b);
     });
   }
+  // Passing on what you have heard
+  const tellBox = panel.querySelector('.tell')!;
+  const options = c.over ? [] : tellable(s, c.id);
+  if (options.length) {
+    const toggle = el<HTMLButtonElement>(`<button class="tell-toggle" ${c.busy ? 'disabled' : ''} aria-expanded="${c.telling}">${c.telling ? 'Never mind' : `Pass something on (${options.length})`}</button>`);
+    toggle.onclick = () => { c.telling = !c.telling; render(); };
+    tellBox.appendChild(toggle);
+    if (c.telling) {
+      for (const id of options) {
+        const f = FACTS[id];
+        const b = el<HTMLButtonElement>(`<button class="tell-fact ${f.secret ? 'secret' : ''}" ${c.busy ? 'disabled' : ''}>
+          <span>${esc(f.text)}</span>${f.secret ? `<small>${esc(AGENT_BY_ID[f.owner].name.split(' ')[0])} said this in private</small>` : ''}</button>`);
+        b.onclick = () => tell(id);
+        tellBox.appendChild(b);
+      }
+    }
+  }
+
   const form = panel.querySelector<HTMLFormElement>('form')!;
   const input = form.querySelector('input')!;
   form.onsubmit = (e) => { e.preventDefault(); void send(input.value); };

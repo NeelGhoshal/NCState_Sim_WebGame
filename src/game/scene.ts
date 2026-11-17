@@ -5,12 +5,16 @@ import { AGENTS, CROWD_LINES } from '../data/agents';
 import { agentHere, walkTime, TALK_RANGE } from '../engine/engine';
 import { findPath } from '../engine/grid';
 import { type GameMap, type Pt, isSolid } from '../engine/types';
-import { CHUNK, isChunked, renderMap, renderPerson, renderRegion, TS } from './render';
+import { CHUNK, FACINGS, FRAMES, type Facing, isChunked, renderMap, renderPerson, renderRegion, renderTag, TS } from './render';
 import { interact, handleEvents, type Target } from '../ui/actions';
 
 interface Walker {
   img: Phaser.GameObjects.Image;
-  label?: Phaser.GameObjects.Text;
+  label?: Phaser.GameObjects.Image;
+  base: string;               // texture key prefix: `${base}:${facing}:${frame}`
+  facing: Facing;
+  flip: boolean;              // facing left
+  anim: number;               // seconds spent walking, drives the step frames
   x: number; y: number;       // current tile
   path: Pt[];
   t: number;                  // progress to the next tile, 0..1
@@ -87,20 +91,24 @@ export class WorldScene extends Phaser.Scene {
     cam.setZoom(cam.zoom > this.minZoom() + 0.01 ? this.minZoom() : base);
   }
 
+  /** Registers the nine frames (three facings x three steps) of a person; returns the key prefix. */
   private personTexture(key: string, colors: { skin: string; hair: string; shirt: string; pants: string }) {
-    if (!this.textures.exists(key)) this.textures.addCanvas(key, renderPerson(colors));
+    for (const f of FACINGS) for (const n of FRAMES) {
+      const k = `${key}:${f}:${n}`;
+      if (!this.textures.exists(k)) this.textures.addCanvas(k, renderPerson(colors, f, n));
+    }
     return key;
   }
 
-  private makeWalker(tex: string, x: number, y: number, speed: number, name?: string): Walker {
-    const img = this.add.image(x * TS + TS / 2, y * TS + TS / 2, tex).setDepth(10 + y);
-    let label: Phaser.GameObjects.Text | undefined;
+  private makeWalker(tex: string, x: number, y: number, speed: number, name?: string, accent = '#ffffff'): Walker {
+    const img = this.add.image(x * TS + TS / 2, y * TS + TS / 2, `${tex}:down:0`).setDepth(10 + y);
+    let label: Phaser.GameObjects.Image | undefined;
     if (name) {
-      label = this.add.text(img.x, img.y - 22, name, {
-        fontFamily: 'system-ui, sans-serif', fontSize: '12px', color: '#fff', stroke: '#000', strokeThickness: 3,
-      }).setOrigin(0.5, 1).setDepth(900);
+      const key = `tag:${name}:${accent}`;
+      if (!this.textures.exists(key)) this.textures.addCanvas(key, renderTag(name, accent));
+      label = this.add.image(img.x, img.y - 20, key).setOrigin(0.5, 1).setScale(0.5).setDepth(900);
     }
-    return { img, label, x, y, path: [], t: 0, speed };
+    return { img, label, base: tex, facing: 'down', flip: false, anim: 0, x, y, path: [], t: 0, speed };
   }
 
   loadMap() {
@@ -129,7 +137,7 @@ export class WorldScene extends Phaser.Scene {
     for (const a of this.agents.values()) { a.img.destroy(); a.label?.destroy(); }
     this.agents.clear();
     for (const def of AGENTS) {
-      const w = this.makeWalker(this.personTexture(`agent:${def.id}`, def.colors), 0, 0, 3, def.name.split(' ')[0]);
+      const w = this.makeWalker(this.personTexture(`agent:${def.id}`, def.colors), 0, 0, 3, def.name.split(' ')[0], def.colors.shirt);
       this.agents.set(def.id, { ...w, visible: false });
       w.img.setVisible(false); w.label?.setVisible(false);
     }
@@ -177,8 +185,11 @@ export class WorldScene extends Phaser.Scene {
     for (const [cx, cy] of want) {
       if (budget-- <= 0) break;
       const k = `${cx},${cy}`, key = `chunk:${this.map.id}:${k}`;
-      if (!this.textures.exists(key)) this.textures.addCanvas(key, renderRegion(this.map, cx * CHUNK, cy * CHUNK, CHUNK, CHUNK, 1));
-      this.chunks.set(k, this.add.image(cx * size, cy * size, key).setOrigin(0).setDepth(1));
+      // Drawn with a 2 px bleed on every side so neighbouring chunks overlap: no seams when the
+      // camera lands between pixels.
+      const bleed = 2 / TS;
+      if (!this.textures.exists(key)) this.textures.addCanvas(key, renderRegion(this.map, cx * CHUNK - bleed, cy * CHUNK - bleed, CHUNK + 2 * bleed, CHUNK + 2 * bleed, 1));
+      this.chunks.set(k, this.add.image(cx * size - 2, cy * size - 2, key).setOrigin(0).setDepth(1));
     }
   }
 
@@ -243,7 +254,18 @@ export class WorldScene extends Phaser.Scene {
       const fx = next ? w.x + (next.x - w.x) * w.t : w.x;
       const fy = next ? w.y + (next.y - w.y) * w.t : w.y;
       w.img.setPosition(fx * TS + TS / 2, fy * TS + TS / 2);
+      if (next) {
+        const dx = next.x - w.x, dy = next.y - w.y;
+        if (dx) { w.facing = 'side'; w.flip = dx < 0; } else if (dy) { w.facing = dy < 0 ? 'up' : 'down'; w.flip = false; }
+      }
     }
+    // Two-step walk cycle while moving; stand still otherwise
+    const moving = w.path.length > 0;
+    w.anim = moving ? w.anim + dt : 0;
+    const frame = moving ? 1 + (Math.floor(w.anim * w.speed * 1.6) % 2) : 0;
+    const key = `${w.base}:${w.facing}:${frame}`;
+    if (w.img.texture.key !== key) w.img.setTexture(key);
+    w.img.setFlipX(w.flip);
     w.label?.setPosition(w.img.x, w.img.y - 14);
     if (w !== this.player) w.img.setDepth(10 + w.img.y / TS);
     return arrived;

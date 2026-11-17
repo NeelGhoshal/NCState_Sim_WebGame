@@ -46,6 +46,8 @@ export interface BuildingMeta {
   label?: boolean;
   /** Large enough to label on the zoomed-out overview. */
   major?: boolean;
+  /** Floors above ground. Drawn as height on outdoor maps; from OSM where mapped. */
+  levels?: number;
 }
 
 /** Smooth shapes drawn under the buildings of an outdoor map. Coordinates are tiles. */
