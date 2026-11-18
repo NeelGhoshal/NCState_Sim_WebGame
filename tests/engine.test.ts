@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { newGame, type GameState, WAKE, PLAYER_CLASS, validTraits } from '../src/engine/state';
+import { newGame, migrate, type GameState, WAKE, PLAYER_CLASS, validTraits } from '../src/engine/state';
 import {
   advance, buy, study, sleep, attendClass, spendExchange, talkCheck, applyAgentTurn, respondInvite,
-  busRunning, boardBus, leaveBus, passTime, struckByCar, allowedActions, walkTime,
+  busRunning, boardBus, leaveBus, passTime, struckByCar, parkCar, redLightTicket, RED_LIGHT_FINE, allowedActions, walkTime,
 } from '../src/engine/engine';
 import { MAPS } from '../src/maps/index';
 import { BUS_STOPS } from '../src/maps/campus';
@@ -185,6 +185,33 @@ describe('engine', () => {
     expect(a.minute).toBe(b.minute);
     expect(a.energy).toBeLessThan(fresh().energy);
     expect(a.stress).toBeGreaterThan(b.stress);
+  });
+
+  it('the car can only be left on a lot; parking moves it and takes a minute', () => {
+    const s = fresh();
+    const m = s.minute;
+    expect(parkCar(s, { x: 10, y: 10, angle: 1 }, false).ok).toBe(false);
+    expect(s.car).not.toEqual({ x: 10, y: 10, angle: 1 });
+    expect(parkCar(s, { x: 10, y: 10, angle: 1 }, true).ok).toBe(true);
+    expect(s.car).toEqual({ x: 10, y: 10, angle: 1 });
+    expect(s.minute).toBe(m + 1);
+  });
+
+  it('a red-light ticket costs money (never below zero) and is on the statement', () => {
+    const s = fresh();
+    const money = s.money;
+    redLightTicket(s);
+    expect(s.money).toBe(money - RED_LIGHT_FINE);
+    expect(s.txns.at(-1)!.amount).toBe(-RED_LIGHT_FINE);
+    s.money = 10;
+    redLightTicket(s);
+    expect(s.money).toBe(0);
+  });
+
+  it('old saves get a car', () => {
+    const s = fresh() as Partial<GameState>;
+    delete s.car;
+    expect(migrate(s as GameState).car).toBeDefined();
   });
 
   it('staying up to 2 AM triggers a pass-out event', () => {

@@ -2,8 +2,13 @@ import Phaser from 'phaser';
 import { ctx, bus, save } from '../core';
 import { MAPS } from '../maps/index';
 import { AGENTS, CROWD_LINES } from '../data/agents';
-import { agentHere, walkTime, passTime, busRunning, BUS, boardBus, leaveBus, struckByCar, TALK_RANGE } from '../engine/engine';
-import { findPath } from '../engine/grid';
+import {
+  agentHere, walkTime, passTime, busRunning, BUS, boardBus, leaveBus, struckByCar, startDriving, parkCar, redLightTicket, TALK_RANGE,
+} from '../engine/engine';
+import { findPath, findRoute, smoothRoute, walkCost } from '../engine/grid';
+import type { GameState } from '../engine/state';
+import { moveBody, stepCar, drivable, onParkingLot, carPoints, type CarBody } from './motion';
+import { openObjectives, type Objective } from '../ui/objectives';
 import { type GameMap, type Pt, isSolid } from '../engine/types';
 import {
   CHUNK, FACINGS, FRAMES, type Facing, isChunked, renderPerson, renderTag, TS,
@@ -17,7 +22,7 @@ import { interact, handleEvents, after, setBusEta, type Target } from '../ui/act
 import { toast } from '../ui/dom';
 
 /** What E does in the scene: the shared targets, plus getting on and off the bus. */
-type SceneTarget = Target | { type: 'board'; stop: string; bus: Vehicle } | { type: 'alight'; stop: string };
+type SceneTarget = Target | { type: 'board'; stop: string; bus: Vehicle } | { type: 'alight'; stop: string } | { type: 'car' } | { type: 'park' };
 
 interface Walker {
   img: Phaser.GameObjects.Image;
@@ -76,17 +81,41 @@ export class WorldScene extends Phaser.Scene {
   private lastCrossing = -1;
   /** Camera view in tiles, refreshed each frame. */
   private view: Rect = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  /** The player's exact position (tiles); the tile in GameState is the one under it. */
+  private pos = { x: 0, y: 0 };
+  /** Where you are walking: waypoints (tile coordinates) and whether you walk it yourself. */
+  private route: { pts: Pt[]; auto: boolean } | null = null;
+  private objective: Objective | null = null;
+  private routeGfx!: Phaser.GameObjects.Graphics;
+  private routeDirty = false;
+  private routeTimer = 0;
+  private lastChip: string | null = null;
+  private stuck = 0;
+  /** Your car while you drive it; null on foot. */
+  private driving: CarBody | null = null;
+  private carImg: Phaser.GameObjects.Image | null = null;
+  private canDrive: (x: number, y: number) => boolean = () => false;
+  private ticketAt = -99;
 
   constructor() { super('world'); }
 
   create() {
     this.cursors = this.input.keyboard!.createCursorKeys();
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,E,SPACE,P,M') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,E,SPACE,P,M,O,G,X') as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.keyboard!.disableGlobalCapture();
     this.keys.E.on('down', () => this.tryInteract());
     this.keys.SPACE.on('down', () => this.tryInteract());
     this.keys.P.on('down', () => { if (!typing()) bus.emit('phone'); });
     this.keys.M.on('down', () => { if (!typing() && !ctx.modal) this.toggleOverview(); });
+    this.keys.O.on('down', () => { if (!typing() && !ctx.modal && ctx.state) openObjectives(this.objective); });
+    this.keys.G.on('down', () => {
+      if (typing() || ctx.modal || !this.objective || this.driving || this.riding) return;
+      if (this.replan()) { this.route!.auto = true; this.routeChanged(); }
+    });
+    this.keys.X.on('down', () => { if (!typing() && !ctx.modal && this.objective) this.clearObjective(); });
+    bus.on('goto', () => { if (ctx.state && !ctx.modal) openObjectives(this.objective); });
+    bus.on('objective', (o: Objective | null) => this.setObjective(o));
+    this.routeGfx = this.add.graphics().setDepth(6);
 
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       if (ctx.modal || !ctx.state || p.button !== 0) return;
@@ -173,6 +202,8 @@ export class WorldScene extends Phaser.Scene {
     const col = playerColors();
     this.player = this.makeWalker(this.personTexture(`player:${col.shirt}`, col), s.x, s.y, this.map.outdoor ? 6 : 5);
     this.player.img.setDepth(500);
+    this.placePlayer(s.x, s.y);
+    this.canDrive = drivable(this.map);
 
     for (const a of this.agents.values()) { a.img.destroy(); a.label?.destroy(); }
     this.agents.clear();
@@ -183,6 +214,11 @@ export class WorldScene extends Phaser.Scene {
     }
     this.spawnCrowd();
     this.setupTraffic();
+    this.placeParkedCar();
+    // Carry on toward the objective on the new map
+    this.route = null;
+    if (this.objective && !this.replan()) this.clearObjective();
+    this.routeChanged();
 
     const cam = this.cameras.main;
     cam.setBounds(0, 0, this.map.w * TS, this.map.h * TS);
@@ -259,6 +295,7 @@ export class WorldScene extends Phaser.Scene {
     const add = (k: string, cv: HTMLCanvasElement) => { if (!this.textures.exists(k)) this.textures.addCanvas(k, cv); };
     CAR_PALETTE.forEach((col, i) => { add(`car:${i}:0`, renderCar(col, false)); add(`car:${i}:1`, renderCar(col, true)); });
     add('bus:0', renderBus(false)); add('bus:1', renderBus(true));
+    add('mycar:0', renderCar('#cc0000', false, true)); add('mycar:1', renderCar('#cc0000', true, true));
     for (const l of ['green', 'yellow', 'red'] as const) add(`sig:${l}`, renderCarSignal(l));
     add('walk:go', renderWalkHead(true, 0)); add('walk:stop', renderWalkHead(false, 0));
     for (let n = 1; n <= 9; n++) add(`walk:${n}`, renderWalkHead(false, n));
@@ -271,6 +308,7 @@ export class WorldScene extends Phaser.Scene {
     for (const h of this.heads) h.img.destroy();
     this.heads = [];
     this.riding = null;
+    this.driving = null;
     this.player.img.setVisible(true);
     const net = this.map.roads;
     if (!net) return;
@@ -319,7 +357,9 @@ export class WorldScene extends Phaser.Scene {
       const x = w.img.x / TS, y = w.img.y / TS;
       if (x > v.x0 - 30 && x < v.x1 + 30 && y > v.y0 - 30 && y < v.y1 + 30) out.push({ x, y });
     };
-    if (!this.riding) add(this.player);
+    if (!this.riding && !this.driving) add(this.player);
+    // Traffic brakes for your car as it would for anyone in the road
+    if (this.driving) for (const q of carPoints(this.driving.x, this.driving.y, this.driving.angle)) out.push(q);
     for (const a of this.agents.values()) if (a.visible) add(a);
     for (const c of this.crowd) add(c.w);
     return out;
@@ -372,20 +412,21 @@ export class WorldScene extends Phaser.Scene {
 
   /** A car or bus ran into the player: the engine applies the cost; the player lands on the kerb. */
   private checkHit(tr: Traffic) {
-    const s = ctx.state!, p = this.player;
+    const s = ctx.state!;
     if (this.hitCooldown > 0) return;
-    const g = this.map.ground[p.y * this.map.w + p.x];
+    const g = this.map.ground[s.y * this.map.w + s.x];
     if (g !== 'road' && g !== 'underpass') return;
-    const me = { x: p.img.x / TS, y: p.img.y / TS };
+    const me = { x: this.pos.x, y: this.pos.y };
     const car = tr.vehicles.find((v) => v.v > 1.2 && tr.touches(v, me));
     if (!car) return;
     const against = this.againstSignal(tr);
     car.v = 0;
     this.hitCooldown = 3;
     this.cameras.main.shake(160, 0.006);
-    const kerb = this.nearestKerb(p.x, p.y);
-    p.path = []; p.t = 0; p.x = kerb.x; p.y = kerb.y;
+    const kerb = this.nearestKerb(s.x, s.y);
     s.x = kerb.x; s.y = kerb.y;
+    this.placePlayer(kerb.x, kerb.y);
+    if (this.route) { this.route.auto = false; this.routeChanged(); }
     after(struckByCar(s, against));
   }
 
@@ -412,7 +453,7 @@ export class WorldScene extends Phaser.Scene {
     after(r);
     if (!r.ok) return;
     this.riding = v;
-    this.player.path = [];
+    if (this.route) { this.route.auto = false; this.routeChanged(); }
     this.player.img.setVisible(false);
   }
 
@@ -420,10 +461,339 @@ export class WorldScene extends Phaser.Scene {
     const s = ctx.state!;
     const r = leaveBus(s, stop);
     this.riding = null;
-    const p = this.player;
-    p.x = s.x; p.y = s.y; p.path = []; p.t = 0;
-    p.img.setVisible(true).setPosition(p.x * TS + TS / 2, p.y * TS + TS / 2);
+    this.placePlayer(s.x, s.y);
+    this.player.img.setVisible(true);
+    if (this.objective) this.replan();
     after(r);
+  }
+
+  // ------------------------------------------------------------ walking
+
+  /** Puts the player on a tile's centre. */
+  private placePlayer(x: number, y: number) {
+    const p = this.player;
+    this.pos.x = x + 0.5; this.pos.y = y + 0.5;
+    p.x = x; p.y = y;
+    p.img.setPosition(this.pos.x * TS, this.pos.y * TS);
+  }
+
+  /** Arrow keys or WASD as a direction (-1..1 on each axis); nothing while a menu is open. */
+  private moveKeys(): { x: number; y: number } {
+    if (ctx.modal || typing()) return { x: 0, y: 0 };
+    const k = this.keys, c = this.cursors;
+    return {
+      x: (c.right.isDown || k.D.isDown ? 1 : 0) - (c.left.isDown || k.A.isDown ? 1 : 0),
+      y: (c.down.isDown || k.S.isDown ? 1 : 0) - (c.up.isDown || k.W.isDown ? 1 : 0),
+    };
+  }
+
+  /**
+   * Moves the player freely: the keys in eight directions, or along the route when it is
+   * walking itself. Returns false when the player left the map (a door, a pass-out).
+   */
+  private walk(s: GameState, dt: number): boolean {
+    const p = this.player, key = this.moveKeys();
+    let vx = 0, vy = 0;
+    if (key.x || key.y) {
+      const l = Math.hypot(key.x, key.y);
+      vx = key.x / l; vy = key.y / l;
+      if (this.route?.auto) { this.route.auto = false; this.routeChanged(); }
+    } else if (this.route?.auto && !ctx.modal) {
+      const pts = this.route.pts;
+      while (pts.length && Math.hypot(pts[0].x - this.pos.x, pts[0].y - this.pos.y) < 0.25) pts.shift();
+      if (pts.length) {
+        const d = Math.hypot(pts[0].x - this.pos.x, pts[0].y - this.pos.y);
+        vx = (pts[0].x - this.pos.x) / d; vy = (pts[0].y - this.pos.y) / d;
+      } else this.routeDone();
+    }
+    const want = p.speed * dt;
+    const moved = vx || vy ? moveBody(this.map, this.pos, vx * want, vy * want) : 0;
+
+    if (this.route) {
+      // Walking by hand: the line shortens as you pass its waypoints
+      const pts = this.route.pts;
+      if (!this.route.auto) while (pts.length && Math.hypot(pts[0].x - this.pos.x, pts[0].y - this.pos.y) < 1.2) pts.shift();
+      if (moved) this.routeDirty = true;
+      // Blocked while walking itself (someone in the way): plan again, then give up
+      if (this.route?.auto && (vx || vy) && moved < want * 0.2) {
+        this.stuck += dt;
+        if (this.stuck > 0.6) { this.stuck = 0; if (!this.replan()) this.clearObjective('No way through from here.'); }
+      } else this.stuck = 0;
+    }
+
+    if (moved > 1e-4) {
+      handleEvents(walkTime(s, dt / this.map.secPerMinute));
+      if (s.mapId !== this.map.id || ctx.state !== s) return false;
+      if (Math.abs(vx) > Math.abs(vy) + 0.1) { p.facing = 'side'; p.flip = vx < 0; } else { p.facing = vy < 0 ? 'up' : 'down'; p.flip = false; }
+      p.anim += moved;
+    } else p.anim = 0;
+    p.img.setPosition(this.pos.x * TS, this.pos.y * TS);
+    const frame = moved > 1e-4 ? 1 + (Math.floor(p.anim * 1.4) % 2) : 0;
+    const tex = `${p.base}:${p.facing}:${frame}`;
+    if (p.img.texture.key !== tex) p.img.setTexture(tex);
+    p.img.setFlipX(p.flip);
+    if (this.cover) {
+      const hidden = this.cover[Math.floor(this.pos.y) * this.map.w + Math.floor(this.pos.x)] === 1;
+      const a = hidden ? 0.38 : 1;
+      if (p.img.alpha !== a) p.img.setAlpha(a);
+    }
+
+    // Onto a new tile: doors, the HUD, arriving
+    const tx = Math.floor(this.pos.x), ty = Math.floor(this.pos.y);
+    if (tx !== s.x || ty !== s.y) {
+      s.x = tx; s.y = ty; p.x = tx; p.y = ty;
+      const portal = this.map.portals.find((q) => q.x === tx && q.y === ty);
+      if (portal) {
+        s.mapId = portal.toMap; s.x = portal.tx; s.y = portal.ty;
+        save();
+        bus.emit('state');
+        this.loadMap();
+        return false;
+      }
+      bus.emit('state');
+      this.checkArrival();
+    }
+
+    // Standing at a bus stop: the clock keeps running while you wait
+    if (moved <= 1e-4 && !ctx.modal && busRunning(s.minute) && this.map.interactables.some((it) => it.kind === 'bus' && cheb(it, p) <= 1)) {
+      handleEvents(passTime(s, dt / this.map.secPerMinute));
+      if (s.mapId !== this.map.id || ctx.state !== s) return false;
+    }
+    return true;
+  }
+
+  // ------------------------------------------------------------ routes and objectives
+
+  private setObjective(o: Objective | null) {
+    if (!o) { this.clearObjective(); return; }
+    this.objective = o;
+    this.route = null;
+    if (!this.replan()) { toast(`Can't find a way to ${o.label} from here.`, 'warn'); this.clearObjective(); return; }
+    this.route!.auto = !this.driving && !this.riding;
+    this.routeChanged();
+    if (this.driving) toast(`Route to ${o.label} drawn. Park, then press G to walk it.`);
+  }
+
+  private clearObjective(msg?: string) {
+    if (msg) toast(msg, 'warn');
+    this.objective = null;
+    this.route = null;
+    this.routeChanged();
+  }
+
+  /** The tiles from which you count as at the objective: its own tile if walkable, else around it. */
+  private approachTiles(o: Objective): Pt[] {
+    const out: Pt[] = [];
+    if (o.w === 1 && o.h === 1 && !isSolid(this.map, o.x, o.y)) out.push({ x: o.x, y: o.y });
+    for (let y = o.y - 1; y <= o.y + o.h; y++) for (let x = o.x - 1; x <= o.x + o.w; x++) {
+      const edge = x === o.x - 1 || x === o.x + o.w || y === o.y - 1 || y === o.y + o.h;
+      if (edge && !isSolid(this.map, x, y)) out.push({ x, y });
+    }
+    return out;
+  }
+
+  /** The door on this map that starts the way to another map (by the fewest doors). */
+  private portalToward(mapId: string) {
+    const first = new Map<string, (typeof this.map.portals)[number]>();
+    const queue: string[] = [];
+    for (const p of this.map.portals) if (!first.has(p.toMap)) { first.set(p.toMap, p); queue.push(p.toMap); }
+    for (let i = 0; i < queue.length; i++) {
+      const id = queue[i];
+      if (id === mapId) return first.get(id)!;
+      for (const p of MAPS[id].portals) if (!first.has(p.toMap) && p.toMap !== this.map.id) { first.set(p.toMap, first.get(id)!); queue.push(p.toMap); }
+    }
+    return null;
+  }
+
+  /** Plans the walking route to the objective, or to the door toward its map. */
+  private replan(): boolean {
+    const o = this.objective;
+    if (!o) return false;
+    const from = { x: Math.floor(this.pos.x), y: Math.floor(this.pos.y) };
+    let goals: Pt[];
+    if (o.mapId === this.map.id) goals = this.approachTiles(o);
+    else {
+      const door = this.portalToward(o.mapId);
+      if (!door) return false;
+      goals = [{ x: door.x, y: door.y }];
+    }
+    goals.sort((a, b) => Math.hypot(a.x - from.x, a.y - from.y) - Math.hypot(b.x - from.x, b.y - from.y));
+    const cost = walkCost(this.map, this.map.roads?.crossTile);
+    for (const g of goals.slice(0, 3)) {
+      const path = findRoute(this.map, from, g, cost);
+      if (!path) continue;
+      const auto = this.route?.auto ?? true;
+      this.route = { pts: path.length ? smoothRoute(this.map, from, path, cost) : [{ x: g.x + 0.5, y: g.y + 0.5 }], auto };
+      this.routeChanged();
+      return true;
+    }
+    return false;
+  }
+
+  /** Arrived when next to the objective on its map. */
+  private checkArrival() {
+    const o = this.objective, s = ctx.state!;
+    if (!o || o.mapId !== this.map.id) return;
+    const dx = Math.max(o.x - s.x, 0, s.x - (o.x + o.w - 1)), dy = Math.max(o.y - s.y, 0, s.y - (o.y + o.h - 1));
+    if (Math.max(dx, dy) > 1) return;
+    toast(`You're at ${o.label}.`, 'ok');
+    this.clearObjective();
+  }
+
+  /** The end of an auto-walked route: arrived, or a click-to-move finished. */
+  private routeDone() {
+    if (this.objective) {
+      this.checkArrival();
+      if (this.objective && !this.replan()) this.clearObjective();
+    } else { this.route = null; this.routeChanged(); }
+  }
+
+  private routeChanged() {
+    this.routeDirty = true;
+    this.routeChip(true);
+  }
+
+  /** The HUD line for the active objective; refreshed when its numbers change. */
+  private routeChip(force = false) {
+    const o = this.objective;
+    let text: string | null = null;
+    if (o) {
+      let len = 0, x = this.pos.x, y = this.pos.y;
+      for (const q of this.route?.pts ?? []) { len += Math.hypot(q.x - x, q.y - y); x = q.x; y = q.y; }
+      const min = Math.max(1, Math.round(len / this.player.speed / this.map.secPerMinute));
+      const mode = this.driving ? 'park, then [G] to walk' : this.route?.auto ? 'walking there' : '[G] walk it for me';
+      text = `→ ${o.label} · about ${min} min on foot · ${mode} · [X] clear`;
+    }
+    if (force || text !== this.lastChip) { this.lastChip = text; bus.emit('route', text); }
+  }
+
+  /** Draws the route as a dotted line with a ring at the end. */
+  private drawRoute() {
+    const g = this.routeGfx;
+    g.clear();
+    if (!this.route || !this.route.pts.length) return;
+    const pts = [{ x: this.pos.x, y: this.pos.y }, ...this.route.pts];
+    g.fillStyle(0xffd34d, 0.95);
+    // Only the dots on screen: a cross-campus route would otherwise be hundreds of shapes a frame
+    const v = this.view, pad = 3;
+    const shown = (x: number, y: number) => x > v.x0 - pad && x < v.x1 + pad && y > v.y0 - pad && y < v.y1 + pad;
+    let carry = 0.5;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i], len = Math.hypot(b.x - a.x, b.y - a.y);
+      let d = carry;
+      for (; d < len; d += 0.7) {
+        const x = a.x + ((b.x - a.x) * d) / len, y = a.y + ((b.y - a.y) * d) / len;
+        if (shown(x, y)) g.fillCircle(x * TS, y * TS, 3.5);
+      }
+      carry = d - len;
+    }
+    const end = pts[pts.length - 1];
+    g.lineStyle(3, 0xffd34d, 1);
+    g.strokeCircle(end.x * TS, end.y * TS, 11);
+    g.fillStyle(0xffd34d, 0.35);
+    g.fillCircle(end.x * TS, end.y * TS, 11);
+  }
+
+  // ------------------------------------------------------------ your car
+
+  /** The parked car, drawn on campus wherever it was left. */
+  private placeParkedCar() {
+    const s = ctx.state!;
+    if (this.map.id !== 'campus') { this.carImg?.setVisible(false); return; }
+    this.carImg ??= this.add.image(0, 0, 'mycar:0');
+    this.carImg.setVisible(true).setTexture('mycar:0').setPosition(s.car.x * TS, s.car.y * TS).setRotation(s.car.angle).setDepth(10 + s.car.y + 0.4);
+  }
+
+  private getInCar() {
+    const s = ctx.state!;
+    const r = startDriving(s);
+    after(r);
+    if (!r.ok) return;
+    this.driving = { x: s.car.x, y: s.car.y, angle: s.car.angle, v: 0, steer: 0 };
+    this.player.img.setVisible(false);
+    if (this.route) { this.route.auto = false; this.routeChanged(); }
+    this.zoomTarget = Math.min(this.zoomTarget, 0.75);
+  }
+
+  private getOutOfCar() {
+    const s = ctx.state!, c = this.driving!;
+    if (Math.abs(c.v) > 0.4) { toast('Stop first: hold S to brake.'); return; }
+    const r = parkCar(s, c, onParkingLot(this.map, c));
+    after(r);
+    if (!r.ok) return;
+    this.driving = null;
+    const spot = this.besideCar(c);
+    s.x = spot.x; s.y = spot.y;
+    this.placePlayer(spot.x, spot.y);
+    this.player.img.setVisible(true);
+    this.placeParkedCar();
+    this.zoomTarget = Math.max(this.zoomTarget, 1);
+    bus.emit('state');
+  }
+
+  /** A walkable tile next to the car, clear of it. */
+  private besideCar(c: { x: number; y: number }): Pt {
+    const cx = Math.floor(c.x), cy = Math.floor(c.y);
+    for (let r = 1; r < 6; r++) {
+      let best: Pt | null = null, bd = Infinity;
+      for (let y = cy - r; y <= cy + r; y++) for (let x = cx - r; x <= cx + r; x++) {
+        if (Math.max(Math.abs(x - cx), Math.abs(y - cy)) !== r || isSolid(this.map, x, y)) continue;
+        const d = Math.hypot(x + 0.5 - c.x, y + 0.5 - c.y);
+        const g = this.map.ground[y * this.map.w + x];
+        const score = d + (g === 'road' ? 3 : 0);
+        if (d > 1.1 && score < bd) { bd = score; best = { x, y }; }
+      }
+      if (best) return best;
+    }
+    return { x: cx, y: cy };
+  }
+
+  /** Whether the car at these points would hit a vehicle or a person. */
+  private carBlocked(pts: Pt[], tr: Traffic | null): boolean {
+    if (tr) for (const v of tr.vehicles) {
+      if (Math.abs(v.x - pts[0].x) > 4 || Math.abs(v.y - pts[0].y) > 4) continue;
+      if (pts.some((p) => tr.touches(v, p, 0.05))) return true;
+    }
+    const near = (w: Walker) => pts.some((p) => Math.hypot(w.img.x / TS - p.x, w.img.y / TS - p.y) < 0.45);
+    for (const a of this.agents.values()) if (a.visible && near(a)) return true;
+    for (const c of this.crowd) if (near(c.w)) return true;
+    return false;
+  }
+
+  /** One frame at the wheel. Returns false when the map changed (a pass-out). */
+  private drive(s: GameState, dt: number, tr: Traffic | null): boolean {
+    const c = this.driving!, key = this.moveKeys();
+    const prev = { x: c.x, y: c.y };
+    stepCar(c, -key.y, key.x, dt, this.canDrive, (pts) => this.carBlocked(pts, tr), (x, y) => isSolid(this.map, x, y));
+    const braking = (key.y > 0 && c.v > 0.2) || (key.y < 0 && c.v < -0.2);
+    const img = this.carImg!;
+    const tex = `mycar:${braking ? 1 : 0}`;
+    if (img.texture.key !== tex) img.setTexture(tex);
+    img.setPosition(c.x * TS, c.y * TS).setRotation(c.angle).setDepth(10 + c.y + 0.4);
+    this.pos.x = c.x; this.pos.y = c.y;
+    this.player.img.setPosition(c.x * TS, c.y * TS);
+    if (Math.abs(c.v) > 0.1) {
+      handleEvents(passTime(s, dt / this.map.secPerMinute));
+      if (s.mapId !== this.map.id || ctx.state !== s || !this.driving) return false;
+    }
+    const tx = Math.floor(c.x), ty = Math.floor(c.y);
+    if ((tx !== s.x || ty !== s.y) && !isSolid(this.map, tx, ty)) { s.x = tx; s.y = ty; this.player.x = tx; this.player.y = ty; bus.emit('state'); }
+    if (tr && c.v > 0.5) this.checkRedLight(tr, prev, c);
+    return true;
+  }
+
+  /** Crossing a stop line on red gets you a ticket (the engine sets the fine). */
+  private checkRedLight(tr: Traffic, a: Pt, b: Pt) {
+    if (tr.clock - this.ticketAt < 6) return;
+    for (const l of tr.net.stopLines) {
+      if (Math.abs(l.x0 - b.x) > 4 || Math.abs(l.y0 - b.y) > 4) continue;
+      if (!segmentsCross(a.x, a.y, b.x, b.y, l.x0, l.y0, l.x1, l.y1)) continue;
+      if (carLight(tr.net, l.signal, l.main, tr.clock) !== 'red') continue;
+      this.ticketAt = tr.clock;
+      this.cameras.main.flash(250, 40, 60, 255);
+      after(redLightTicket(ctx.state!));
+      return;
+    }
   }
 
   private spawnCrowd() {
@@ -524,8 +894,15 @@ export class WorldScene extends Phaser.Scene {
       if (!opts.length) return;
       goal = opts[0];
     }
-    const path = findPath(this.map, { x: this.player.x, y: this.player.y }, goal);
-    if (path) { this.player.path = path; }
+    if (this.driving || this.riding) return;
+    const from = { x: Math.floor(this.pos.x), y: Math.floor(this.pos.y) };
+    const cost = walkCost(this.map, this.map.roads?.crossTile);
+    const path = findRoute(this.map, from, goal, cost);
+    if (!path) return;
+    // A click replaces any objective with a plain walk to that spot
+    this.objective = null;
+    this.route = { pts: path.length ? smoothRoute(this.map, from, path, cost) : [], auto: true };
+    this.routeChanged();
   }
 
   private findTarget(): SceneTarget | null {
@@ -535,11 +912,13 @@ export class WorldScene extends Phaser.Scene {
       const b = this.riding;
       return b.dwell! > 0 && b.at ? { type: 'alight', stop: b.at } : null;
     }
+    if (this.driving) return Math.abs(this.driving.v) < 0.4 ? { type: 'park' } : null;
     const tr = this.tr;
     if (tr) for (const b of tr.buses) {
       if (!(b.dwell! > 0.3) || !b.at) continue;
       if (cheb(BUS_STOPS[b.at], me) <= 2) return { type: 'board', stop: b.at, bus: b };
     }
+    if (this.map.id === 'campus' && Math.hypot(s.car.x - this.pos.x, s.car.y - this.pos.y) < 2.4) return { type: 'car' };
     let best: { d: number; t: Target } | null = null;
     for (const def of AGENTS) {
       const a = this.agents.get(def.id)!;
@@ -564,6 +943,8 @@ export class WorldScene extends Phaser.Scene {
   private describe(t: SceneTarget): string {
     if (t.type === 'board') return 'Board the Wolfline (free)';
     if (t.type === 'alight') return `Get off at ${BUS_STOPS[t.stop].name}`;
+    if (t.type === 'car') return 'Drive your car';
+    if (t.type === 'park') return onParkingLot(this.map, this.driving!) ? 'Park here and get out' : 'No parking here: find a lot marked P';
     if (t.type === 'obj' && t.it.kind === 'bus') {
       if (!busRunning(ctx.state!.minute)) return `${t.it.label} · no buses until 7 AM`;
       const sec = this.busEtaSeconds(t.it.ref!);
@@ -584,7 +965,9 @@ export class WorldScene extends Phaser.Scene {
     if (!t) return;
     if (t.type === 'board') return this.board(t.stop, t.bus);
     if (t.type === 'alight') return this.alight(t.stop);
-    this.player.path = [];
+    if (t.type === 'car') return this.getInCar();
+    if (t.type === 'park') return this.getOutOfCar();
+    if (this.route?.auto) { this.route.auto = false; this.routeChanged(); }
     interact(t);
   }
 
@@ -607,44 +990,20 @@ export class WorldScene extends Phaser.Scene {
       p.img.setPosition(b.x * TS, b.y * TS);
       const tx = Math.floor(b.x), ty = Math.floor(b.y);
       if ((tx !== s.x || ty !== s.y) && !isSolid(this.map, tx, ty)) { s.x = tx; s.y = ty; p.x = tx; p.y = ty; bus.emit('state'); }
+      if (this.route) this.routeDirty = true;
       // Service over: everyone off at the next stop
       if (b.dwell! > 0 && b.at && !busRunning(s.minute)) { toast('Last stop of the night. Everybody off.'); this.alight(b.at); }
     }
 
-    // Player input
-    if (!this.riding && !ctx.modal && !typing() && !p.path.length) {
-      const k = this.keys, c = this.cursors;
-      let dx = 0, dy = 0;
-      if (c.left.isDown || k.A.isDown) dx = -1; else if (c.right.isDown || k.D.isDown) dx = 1;
-      else if (c.up.isDown || k.W.isDown) dy = -1; else if (c.down.isDown || k.S.isDown) dy = 1;
-      if ((dx || dy) && !isSolid(this.map, p.x + dx, p.y + dy)) p.path = [{ x: p.x + dx, y: p.y + dy }];
-    }
-    if (ctx.modal) p.path = [];
-    if (p.path.length) {
-      handleEvents(walkTime(s, dt / this.map.secPerMinute));
-      if (s.mapId !== this.map.id || ctx.state !== s) return; // a pass-out or bus may have moved us
-      const arrived = this.step(p, dt, false);
-      for (const tile of arrived) {
-        s.x = tile.x; s.y = tile.y;
-        const portal = this.map.portals.find((q) => q.x === tile.x && q.y === tile.y);
-        if (portal) {
-          s.mapId = portal.toMap; s.x = portal.tx; s.y = portal.ty;
-          save();
-          bus.emit('state');
-          this.loadMap();
-          return;
-        }
-      }
-      if (arrived.length) bus.emit('state');
-    } else if (!this.riding) {
-      this.step(p, dt, false);
-      // Waiting at a bus stop: the clock keeps running
-      const atStop = this.map.interactables.some((it) => it.kind === 'bus' && cheb(it, p) <= 1);
-      if (atStop && busRunning(s.minute) && !ctx.modal) {
-        handleEvents(passTime(s, dt / this.map.secPerMinute));
-        if (s.mapId !== this.map.id || ctx.state !== s) return;
-      }
-    }
+    // On foot or at the wheel
+    if (!this.riding) {
+      if (this.driving) { if (!this.drive(s, dt, this.tr)) return; }
+      else if (!this.walk(s, dt)) return;
+    } else { this.pos.x = this.riding.x; this.pos.y = this.riding.y; }
+
+    // The route line follows you, redrawn a few times a second
+    this.routeTimer -= dt;
+    if (this.routeDirty && this.routeTimer <= 0) { this.routeDirty = false; this.routeTimer = 0.12; this.drawRoute(); this.routeChip(); }
 
     // Traffic: cars near the camera, the buses everywhere, the lights in view
     const tr = this.tr;
@@ -656,7 +1015,7 @@ export class WorldScene extends Phaser.Scene {
       tr.update(dt, detail ? this.view : null, this.roadPeds(), busy);
       this.drawVehicles(tr);
       this.updateHeads(tr, detail);
-      if (!this.riding) { this.checkHit(tr); this.crossingHint(tr); }
+      if (!this.riding && !this.driving) { this.checkHit(tr); this.crossingHint(tr); }
     }
 
     // Agents and crowd
@@ -708,4 +1067,10 @@ function typing() {
 
 function playerColors() {
   return { skin: '#c68e63', hair: '#2b1d14', shirt: '#cc0000', pants: '#22252e' };
+}
+
+/** Whether segment a-b crosses segment c-d. */
+function segmentsCross(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number) {
+  const o = (px: number, py: number, qx: number, qy: number, rx: number, ry: number) => Math.sign((qx - px) * (ry - py) - (qy - py) * (rx - px));
+  return o(ax, ay, bx, by, cx, cy) !== o(ax, ay, bx, by, dx, dy) && o(cx, cy, dx, dy, ax, ay) !== o(cx, cy, dx, dy, bx, by);
 }

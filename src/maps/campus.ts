@@ -39,6 +39,8 @@ export const BUS_STOPS: Record<string, BusStop> = {};
 export const BUS_ORDER = ['talley', 'fountain', 'belltower', 'quad'];
 /** The loop as driving steps on the campus street network; each leg ends at a stop. */
 export const BUS_ROUTE: RouteStep[] = [];
+/** Where your car starts the game: the parking lot nearest your hall. Tile coordinates of its centre. */
+export const CAR_START = { x: 0, y: 0, angle: 0 };
 
 /** Outside tiles of Talley's doors, where the interior's exits land. */
 export const TALLEY_EXITS = { north: { x: 0, y: 0 }, south: { x: 0, y: 0 } };
@@ -332,6 +334,16 @@ export function buildCampus(): GameMap {
   const map = b.build();
   map.spawn = { ...tucker.out };
   map.roads = net;
+  // Your car: on the nearest lot to the hall with room for it (three tiles of parking in a row)
+  let bestCar = Infinity;
+  for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 2; x++) {
+    let ok = true;
+    for (let dy = -1; dy <= 1 && ok; dy++) for (let dx = -1; dx <= 2; dx++) if (map.ground[(y + dy) * W + x + dx] !== 'parking' || map.obj[(y + dy) * W + x + dx]) { ok = false; break; }
+    if (!ok) continue;
+    const d = (x - map.spawn.x) ** 2 + (y - map.spawn.y) ** 2;
+    if (d < bestCar) { bestCar = d; CAR_START.x = x + 1; CAR_START.y = y + 0.5; }
+  }
+  if (!isFinite(bestCar)) throw new Error('campus: no parking lot for the car');
   const reach = reachable(map, map.spawn);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const g = map.ground[y * W + x];

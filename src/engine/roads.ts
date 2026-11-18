@@ -43,7 +43,12 @@ export interface RoadNet {
   crossings: Crossing[];
   /** Stop-line distance from the node at each end: index edge*2 for end a, edge*2+1 for end b. -1 = no line. */
   stopAt: Float32Array;
-  stopLines: { x0: number; y0: number; x1: number; y1: number }[];
+  /** Crosswalk over each edge end (same indexing), or -1. Turning traffic waits while it shows Walk. */
+  crossAt: Int32Array;
+  /** Distance of that crosswalk's centre from the node. */
+  crossDist: Float32Array;
+  /** The kerb-side half of each stop line, with the signal that governs it. */
+  stopLines: { x0: number; y0: number; x1: number; y1: number; signal: number; main: boolean }[];
   heads: SignalHead[];
   /** Tile index (y * mapWidth + x) -> crossing index. */
   crossTile: Map<number, number>;
@@ -140,9 +145,11 @@ export function buildRoadNet(lines: MapLine[], w: number, h: number): RoadNet {
     s.main = [...score.entries()].sort((p, q) => q[1] - p[1])[0]?.[0] ?? '';
   });
 
-  // ---- Crosswalks and stop lines on each arm that leaves a signal's cluster
+  // ---- Stop lines on every arm into a signal, and a crosswalk where one fits
   const crossings: Crossing[] = [];
   const stopAt = new Float32Array(edges.length * 2).fill(-1);
+  const crossAt = new Int32Array(edges.length * 2).fill(-1);
+  const crossDist = new Float32Array(edges.length * 2);
   const stopLines: RoadNet['stopLines'] = [];
   const heads: SignalHead[] = [];
   const crossTile = new Map<number, number>();
@@ -153,15 +160,24 @@ export function buildRoadNet(lines: MapLine[], w: number, h: number): RoadNet {
     for (const ei of nd.edges) {
       const e = edges[ei];
       const atA = e.a === n;
+      const end = ei * 2 + (atA ? 0 : 1);
       const other = nodes[atA ? e.b : e.a];
-      if (other.signal === nd.signal && e.len < 14) continue; // a link inside the cluster
+      if (other.signal === nd.signal && e.len < 14) continue; // a link inside the cluster: already in the junction
+      const overMain = !!e.name && e.name === signals[nd.signal].main;
+      // Every way in has a stop line, even a short one (then the line sits near its far end)
+      const stop = Math.min(reach + 0.9, Math.max(0.2, e.len - 1.2));
+      stopAt[end] = stop;
+      const sp = pointOnEdge(e, atA ? stop : e.len - stop);
+      const sx = atA ? sp.tx : -sp.tx, sy = atA ? sp.ty : -sp.ty; // pointing away from the junction
+      stopLines.push({ x0: sp.x, y0: sp.y, x1: sp.x + sy * e.half, y1: sp.y - sx * e.half, signal: nd.signal, main: overMain });
+      heads.push({ kind: 'car', signal: nd.signal, main: overMain, x: sp.x + sy * (e.half + 0.5), y: sp.y - sx * (e.half + 0.5) });
+
+      // A crosswalk, when the arm is long enough and it would not land on another street
       if (e.len < reach + 3) continue;
       const arc = atA ? reach : e.len - reach;
       const pt = pointOnEdge(e, arc);
-      // Tangent pointing away from the junction
       const tx = atA ? pt.tx : -pt.tx, ty = atA ? pt.ty : -pt.ty;
       const nx = -ty, ny = tx;
-      // Skip arms whose crossing would land on another street of the same junction (divided roads)
       const onOther = nodes.some((m) => m.signal === nd.signal && m.edges.some((oi) => {
         const o = edges[oi];
         if (oi === ei || (o.name && o.name === e.name)) return false;
@@ -170,27 +186,20 @@ export function buildRoadNet(lines: MapLine[], w: number, h: number): RoadNet {
       }));
       if (onOther) continue;
       const half = e.half + 0.2;
-      const overMain = !!e.name && e.name === signals[nd.signal].main;
       const ci = crossings.length;
       crossings.push({ signal: nd.signal, overMain, x0: pt.x - nx * half, y0: pt.y - ny * half, x1: pt.x + nx * half, y1: pt.y + ny * half, tx, ty });
-      for (let s = -half; s <= half; s += 0.25) for (const along of [-0.45, 0, 0.45]) {
-        const x = Math.floor(pt.x + nx * s + tx * along), y = Math.floor(pt.y + ny * s + ty * along);
+      crossAt[end] = ci;
+      crossDist[end] = reach;
+      for (let k = -half; k <= half; k += 0.25) for (const along of [-0.45, 0, 0.45]) {
+        const x = Math.floor(pt.x + nx * k + tx * along), y = Math.floor(pt.y + ny * k + ty * along);
         if (x >= 0 && y >= 0 && x < w && y < h) crossTile.set(y * w + x, ci);
       }
-      // Walk heads on both kerbs
       for (const side of [-1, 1]) {
         heads.push({ kind: 'ped', signal: nd.signal, main: overMain, x: pt.x + nx * side * (half + 0.55), y: pt.y + ny * side * (half + 0.55), crossing: ci });
       }
-      // Traffic coming in toward the junction stops just behind the crosswalk. Incoming traffic
-      // drives on its right, which (seen from the junction looking out) is the -n side.
-      const stop = reach + 0.9;
-      stopAt[ei * 2 + (atA ? 0 : 1)] = stop;
-      const sp = pointOnEdge(e, atA ? stop : e.len - stop);
-      stopLines.push({ x0: sp.x, y0: sp.y, x1: sp.x - nx * e.half, y1: sp.y - ny * e.half });
-      heads.push({ kind: 'car', signal: nd.signal, main: overMain, x: sp.x - nx * (e.half + 0.5), y: sp.y - ny * (e.half + 0.5) });
     }
   }
-  return { nodes, edges, signals, crossings, stopAt, stopLines, heads, crossTile };
+  return { nodes, edges, signals, crossings, stopAt, crossAt, crossDist, stopLines, heads, crossTile };
 }
 
 /** The nearest point on the network to p. `ok` limits which edges count. */

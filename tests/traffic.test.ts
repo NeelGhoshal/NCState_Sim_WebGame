@@ -151,6 +151,53 @@ describe('traffic', () => {
     }
   });
 
+  it('no car or bus crosses a stop line on red', () => {
+    let crossings = 0;
+    for (const [i, view] of [[300, 15], [100, 90], [380, 110], [230, 80], [20, 90]].entries()) {
+      const tr = new Traffic(net, i + 11);
+      if (i === 0) { tr.addBus(BUS_ROUTE, 0); tr.addBus(BUS_ROUTE, 9); }
+      const area = { x0: view[0], y0: view[1], x1: view[0] + 45, y1: view[1] + 30 };
+      const before = new Map<number, { edge: number; dir: number; front: number }>();
+      for (let f = 0; f < 60 * 120; f++) {
+        tr.update(1 / 60, area, [], 1);
+        for (const v of tr.vehicles) {
+          const front = v.s + v.len / 2, b = before.get(v.id);
+          before.set(v.id, { edge: v.edge, dir: v.dir, front });
+          if (!b || b.edge !== v.edge || b.dir !== v.dir) continue;
+          const e = net.edges[v.edge], end = v.edge * 2 + (v.dir > 0 ? 1 : 0), stop = net.stopAt[end];
+          if (stop < 0) continue;
+          const line = e.len - stop;
+          if (b.front <= line && front > line) {
+            crossings++;
+            const node = net.nodes[v.dir > 0 ? e.b : e.a];
+            const light = carLight(net, node.signal, !!e.name && e.name === net.signals[node.signal].main, tr.clock);
+            expect(light, `vehicle ${v.id} on edge ${v.edge}`).not.toBe('red');
+          }
+        }
+      }
+    }
+    expect(crossings).toBeGreaterThan(20); // traffic did go through the lights
+  }, 60_000);
+
+  it('cars wait for someone crossing on Walk instead of turning through them', () => {
+    let checked = 0;
+    for (const [i, k] of net.crossings.entries()) {
+      if (i % 4) continue; // a sample of crosswalks
+      const tr = new Traffic(net, i + 3);
+      const mid = { x: (k.x0 + k.x1) / 2, y: (k.y0 + k.y1) / 2 };
+      const area = { x0: mid.x - 22, y0: mid.y - 15, x1: mid.x + 22, y1: mid.y + 15 };
+      for (let f = 0; f < 60 * 70; f++) {
+        const w = walkLight(net, k.signal, k.overMain, tr.clock);
+        const walking = w.walk;
+        tr.update(1 / 60, area, walking ? [mid] : [], 1);
+        if (!walking) continue;
+        checked++;
+        for (const v of tr.vehicles) expect(tr.touches(v, mid, 0.1), `crossing ${i}, vehicle ${v.id}`).toBe(false);
+      }
+    }
+    expect(checked).toBeGreaterThan(1000);
+  }, 120_000);
+
   it('the bus drives the whole loop and dwells at each stop in order', () => {
     const tr = new Traffic(net);
     const bus = tr.addBus(BUS_ROUTE, 0);

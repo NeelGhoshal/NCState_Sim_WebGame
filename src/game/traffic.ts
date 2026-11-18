@@ -26,16 +26,16 @@ export function carLight(net: RoadNet, sig: number, main: boolean, t: number): L
 }
 
 /**
- * The walk signal for a crossing. Walkers go while the street they cross has red:
- * WALK first, then a flashing countdown, then a steady DON'T WALK before cars get the green.
- * `count` is the seconds left on the countdown (0 when steady).
+ * The walk signal for a crossing. Walkers go while the street they cross has red, starting two
+ * seconds after it turns red so late cars have cleared: WALK, then a flashing countdown, then a
+ * steady DON'T WALK before cars get the green. `count` is the seconds left on the countdown.
  */
 export function walkLight(net: RoadNet, sig: number, overMain: boolean, t: number): { walk: boolean; count: number } {
   const u = phase(net, sig, t);
   // Over the main street: its red runs 15-30. Over a side street: its red runs 29-46 (wrapping).
-  const r = overMain ? u - 16 : (u + 1) % CYCLE;
-  if (r >= 0 && r < 7) return { walk: true, count: 0 };
-  if (r >= 7 && r < 12) return { walk: false, count: Math.ceil(12 - r) };
+  const r = ((overMain ? u - 17 : u - 1) + CYCLE) % CYCLE;
+  if (r < 7) return { walk: true, count: 0 };
+  if (r < 11) return { walk: false, count: Math.ceil(11 - r) };
   return { walk: false, count: 0 };
 }
 
@@ -95,11 +95,18 @@ export class Traffic {
   private target = 0;
   /** Edges in the area around the camera, where new cars can start. */
   private near: number[] = [];
+  /** Crosswalks by 16-tile cell, so each vehicle only looks at the ones around it. */
+  private crossCells = new Map<number, number[]>();
   private warm = true;
 
   constructor(public net: RoadNet, seed = 7) {
     this.rand = mulberry(seed);
     this.claims = new Int32Array(net.nodes.length).fill(-1);
+    net.crossings.forEach((k, i) => {
+      const key = this.cell((k.x0 + k.x1) / 2, (k.y0 + k.y1) / 2);
+      if (!this.crossCells.has(key)) this.crossCells.set(key, []);
+      this.crossCells.get(key)!.push(i);
+    });
     this.boxes = net.edges.map((e) => {
       const b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
       for (let i = 0; i < e.p.length; i += 2) {
@@ -109,6 +116,8 @@ export class Traffic {
       return b;
     });
   }
+
+  private cell(x: number, y: number) { return Math.floor(y / 16) * 4096 + Math.floor(x / 16); }
 
   get buses() { return this.vehicles.filter((v) => v.kind === 'bus'); }
 
@@ -274,22 +283,34 @@ export class Traffic {
     // A bus pulls in at the end of a stretch that ends at a stop
     if (v.route && v.route[v.step!].stop) target = Math.min(target, stopFor(endS - v.s) + 0.4);
 
-    // Signals and junctions at the end of the edge (only when this stretch reaches it)
+    // Stop lines at the end of this edge and of the next one (a short edge leaves no room to
+    // brake if the line only comes into view once you are on it)
+    const line = (edge: number, dir: 1 | -1, toStart: number, after: { edge: number; dir: 1 | -1 } | null) => {
+      const ed = net.edges[edge];
+      const stop = net.stopAt[edge * 2 + (dir > 0 ? 1 : 0)], sig = net.nodes[dir > 0 ? ed.b : ed.a].signal;
+      if (stop < 0 || sig < 0) return;
+      const toLine = toStart + ed.len - stop;
+      if (toLine < -0.3 || toLine > 40) return;
+      const light = carLight(net, sig, !!ed.name && ed.name === net.signals[sig].main, this.clock);
+      const canStop = toLine > (v.v * v.v) / (2 * BRAKE) - 0.5;
+      // Turning into a street whose crosswalk has people on it during Walk: wait at the line
+      const yieldNext = !!after && canStop && this.walkersOn(net.crossAt[after.edge * 2 + (after.dir > 0 ? 0 : 1)], peds);
+      if (light === 'red' || (light === 'yellow' && canStop) || yieldNext) {
+        target = Math.min(target, stopFor(toLine - 0.1));
+        hard = Math.min(hard, v.s + Math.max(0, toLine));
+      }
+    };
     const atEnd = !v.route || Math.abs(endS - e.len) < 1e-6;
     if (atEnd) {
+      line(v.edge, v.dir, -(v.s + v.len / 2), v.next);
+      const n = v.next;
+      const nextFull = !v.route || (() => { const st = v.route![(v.step! + 1) % v.route!.length]; return st.s0 === 0 && Math.abs(st.s1 - net.edges[st.edge].len) < 1e-6; })();
+      if (n && nextFull) line(n.edge, n.dir, e.len - v.s - v.len / 2, null);
+    }
+    if (atEnd) {
       const node = v.dir > 0 ? e.b : e.a;
-      const stop = net.stopAt[v.edge * 2 + (v.dir > 0 ? 1 : 0)];
-      const sig = net.nodes[node].signal;
-      if (stop >= 0 && sig >= 0) {
-        const toLine = e.len - stop - (v.s + v.len / 2);
-        if (toLine > -0.3) {
-          const light = carLight(net, sig, !!e.name && e.name === net.signals[sig].main, this.clock);
-          const canStop = toLine > (v.v * v.v) / (2 * BRAKE) - 0.5;
-          if (light === 'red' || (light === 'yellow' && canStop)) {
-            target = Math.min(target, stopFor(toLine - 0.1));
-            if (toLine > 0) hard = Math.min(hard, v.s + toLine);
-          }
-        }
+      if (net.stopAt[v.edge * 2 + (v.dir > 0 ? 1 : 0)] >= 0 && net.nodes[node].signal >= 0) {
+        // signalized: handled above
       } else if (net.nodes[node].edges.length >= 3) {
         // Unsignalized junction: one vehicle in the box at a time, give up waiting after a while
         const toNode = e.len - v.s - v.len / 2 - e.half;
@@ -299,6 +320,24 @@ export class Traffic {
           else if (toNode > 0.2) { target = Math.min(target, stopFor(toNode - 0.2)); v.wait += dt; }
         }
       }
+    }
+
+    // A crosswalk just ahead with people on it during Walk: stop short of the stripes. Checked by
+    // position, not by edge, so it holds however the streets are split up in the map data.
+    const hx = Math.cos(v.angle), hy = Math.sin(v.angle);
+    const cx = Math.floor(v.x / 16), cy = Math.floor(v.y / 16);
+    for (let gy = cy - 1; gy <= cy + 1; gy++) for (let gx = cx - 1; gx <= cx + 1; gx++) for (const ci of this.crossCells.get(gy * 4096 + gx) ?? []) {
+      const k = net.crossings[ci];
+      const mx = (k.x0 + k.x1) / 2 - v.x, my = (k.y0 + k.y1) / 2 - v.y;
+      if (Math.abs(mx) > 8 || Math.abs(my) > 8) continue;
+      const align = hx * k.tx + hy * k.ty;
+      if (Math.abs(align) < 0.5) continue;
+      const half = Math.hypot(k.x1 - k.x0, k.y1 - k.y0) / 2;
+      if (Math.abs(mx * k.ty - my * k.tx) > half + 0.3) continue; // beside it, not heading over it
+      const toStripes = (mx * k.tx + my * k.ty) * Math.sign(align) - v.len / 2 - 0.45;
+      if (toStripes < -0.05 || toStripes > 7 || !this.walkersOn(ci, peds)) continue;
+      target = Math.min(target, stopFor(toStripes - 0.3));
+      hard = Math.min(hard, v.s + Math.max(0, toStripes - 0.1));
     }
 
     // People on the road ahead: brake for them. A car can only brake so hard.
@@ -315,7 +354,10 @@ export class Traffic {
     const before = v.v;
     v.v = target > v.v ? Math.min(target, v.v + ACCEL * dt) : Math.max(target, v.v - MAX_BRAKE * dt);
     v.braking = v.v < before - 0.01 || (v.v < 0.05 && target < 0.05);
+    const was = v.s;
     v.s = Math.min(v.s + v.v * dt, hard);
+    // Held back by the clamp: the speed drops with it, so it cannot carry on through next frame
+    if (dt > 0 && v.s < was + v.v * dt - 1e-6) v.v = Math.min(v.v, Math.max(0, (v.s - was) / dt));
 
     // Onto the next edge
     const key = this.laneKey(v);
@@ -343,6 +385,21 @@ export class Traffic {
       if ((v.dir > 0 ? ce.a : ce.b) === v.claim && v.s > v.len + 2.5) this.release(v);
     }
     this.place(v, false, dt);
+  }
+
+  /** Whether crossing `ci` shows Walk (or its countdown) with someone on it or stepping onto it. */
+  private walkersOn(ci: number, peds: Pt[]): boolean {
+    if (ci < 0 || !peds.length) return false;
+    const k = this.net.crossings[ci];
+    const w = walkLight(this.net, k.signal, k.overMain, this.clock);
+    if (!w.walk && !w.count) return false;
+    const dx = k.x1 - k.x0, dy = k.y1 - k.y0, len = Math.hypot(dx, dy) || 1;
+    for (const p of peds) {
+      const along = ((p.x - k.x0) * dx + (p.y - k.y0) * dy) / len;
+      const off = Math.abs((p.x - k.x0) * k.tx + (p.y - k.y0) * k.ty);
+      if (along > -1.2 && along < len + 1.2 && off < 1.3) return true;
+    }
+    return false;
   }
 
   private routeNext(v: Vehicle) {
@@ -395,6 +452,11 @@ export class Traffic {
       const e = this.net.edges[ei];
       const dir: 1 | -1 = this.rand() < 0.5 ? 1 : -1;
       const s = 1.5 + this.rand() * Math.max(0, e.len - 3);
+      // Not where it would have to brake hard: near a stop line ahead, or on a crosswalk
+      const stopEnd = this.net.stopAt[ei * 2 + (dir > 0 ? 1 : 0)];
+      if (stopEnd >= 0 && s > e.len - stopEnd - 9) continue;
+      const startEnd = ei * 2 + (dir > 0 ? 0 : 1);
+      if (this.net.crossAt[startEnd] >= 0 && s < this.net.crossDist[startEnd] + 2) continue;
       const v: Vehicle = {
         id: this.nextId++, kind: 'car', edge: ei, dir, s, v: 0, vmax: 8 + this.rand() * 2.5, len: 1.7, width: 0.9,
         next: null, x: 0, y: 0, angle: 0, braking: false, color: Math.floor(this.rand() * CAR_COLORS), claim: -1, wait: 0,

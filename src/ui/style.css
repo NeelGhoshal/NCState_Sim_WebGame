@@ -50,6 +50,8 @@ code { font-family: ui-monospace, monospace; background: rgba(255,255,255,0.08);
 .hud-right { display: flex; gap: 8px; align-items: center; }
 #phone-btn { position: relative; padding: 8px 12px; }
 .badge { position: absolute; top: -6px; right: -6px; background: var(--red); border-radius: 99px; font-size: 11px; padding: 1px 6px; font-weight: 700; }
+#route { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); background: var(--panel); border: 1px solid #ffd34d; color: var(--ink); padding: 6px 14px; border-radius: 99px; font-size: 13px; pointer-events: none; white-space: nowrap; }
+.panel.menu .options { max-height: 62vh; overflow-y: auto; }
 #prompt { position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line); padding: 8px 14px; border-radius: 99px; font-weight: 600; }
 
 /* Toasts */

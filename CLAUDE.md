@@ -74,8 +74,10 @@ src/agents/                  runtime.ts (builds snapshots, calls the service), g
 src/core.ts                  Current GameState, event bus, local save
 src/game/                    scene.ts (movement, agents, crowd, prompts, chunk streaming, bus riding), render.ts (canvas drawing),
                              traffic.ts (cars, buses and signal timing; pure TS, only simulates cars near the camera),
+                             motion.ts (free walking with wall sliding, car physics, parking-lot test; pure TS),
                              mapWorker.ts + mapRenderer.ts (map drawing off the main thread, ImageBitmap uploads)
-src/ui/                      DOM overlay: actions.ts (E-key handling, overnight flow), hud, dialogue, phone, screens
+src/ui/                      DOM overlay: actions.ts (E-key handling, overnight flow), hud, dialogue, phone, screens,
+                             objectives.ts (the "Go to" picker; routes come from findRoute/smoothRoute in engine/grid.ts)
 tests/                       Vitest
 ```
 

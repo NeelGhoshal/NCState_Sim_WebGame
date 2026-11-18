@@ -304,6 +304,35 @@ export function struckByCar(s: GameState, againstSignal: boolean): Result {
   };
 }
 
+// ---------------------------------------------------------------- your car
+
+/** Balancing placeholder: a campus parking ticket for running a red light. */
+export const RED_LIGHT_FINE = 25;
+
+export function startDriving(s: GameState): Result {
+  if (s.mapId !== 'campus') return fail('Your car is on campus.');
+  logEvent(s, 'Got in the car');
+  return { ok: true, msg: 'You get in your car. W/S to drive and brake, A/D to steer. Park in a lot marked P and press E to get out.', events: [] };
+}
+
+/** Leaves the car where it is. Only allowed on a designated lot (the scene checks the ground). */
+export function parkCar(s: GameState, car: { x: number; y: number; angle: number }, onLot: boolean): Result {
+  if (!onLot) return fail('You can only leave your car in a designated lot (marked P).');
+  s.car = { x: car.x, y: car.y, angle: car.angle };
+  const events = advance(s, 1);
+  logEvent(s, 'Parked the car');
+  return { ok: true, msg: 'You park and lock up.', events };
+}
+
+export function redLightTicket(s: GameState): Result {
+  const fine = Math.min(RED_LIGHT_FINE, Math.max(0, s.money));
+  s.money -= fine;
+  s.stress = clamp(s.stress + 5, 0, 100);
+  s.txns.push({ day: s.day, minute: s.minute, label: 'Campus police: red light ticket', amount: -fine });
+  logEvent(s, 'Got a ticket for running a red light');
+  return { ok: false, msg: `Flashing lights behind you. Ran a red light: ${fmtMoney(fine)} ticket.`, events: [] };
+}
+
 // ---------------------------------------------------------------- conversations
 
 export function agentHere(s: GameState, id: string): { pos: Pt; activity: string; endsAt: number } | null {

@@ -681,7 +681,17 @@ export function renderRegion(map: GameMap, x0: number, y0: number, w: number, h:
       c.restore();
       tracePoly(c, a.p); c.strokeStyle = '#7d3a2b'; c.lineWidth = 2; c.stroke();
     } else if (a.k === 'pitch') { c.strokeStyle = 'rgba(255,255,255,0.75)'; c.lineWidth = 2; c.stroke(); }
-    else if (a.k === 'parking') { c.strokeStyle = '#d6d3cc'; c.lineWidth = 2; c.stroke(); }
+    else if (a.k === 'parking') {
+      c.strokeStyle = '#d6d3cc'; c.lineWidth = 2; c.stroke();
+      // Designated parking: a blue P on lots big enough to park in
+      if ((a.b.x1 - a.b.x0) * (a.b.y1 - a.b.y0) > 30) {
+        const px = ((a.b.x0 + a.b.x1) / 2) * TS, py = ((a.b.y0 + a.b.y1) / 2) * TS;
+        c.fillStyle = '#1f5fbf'; c.strokeStyle = '#f4f1ea'; c.lineWidth = 2;
+        c.beginPath(); c.roundRect(px - 11, py - 11, 22, 22, 4); c.fill(); c.stroke();
+        c.fillStyle = '#f4f1ea'; c.font = `bold 15px ${LABEL_FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle';
+        c.fillText('P', px, py + 1);
+      }
+    }
     else if (a.k === 'water') { c.strokeStyle = '#3c6f9c'; c.lineWidth = 2; c.stroke(); }
   }
   drawLines(c, P.lines.filter((l) => hits(l.b, view)), overview);
@@ -879,7 +889,7 @@ function vehicleCanvas(w: number, h: number) {
 }
 
 /** A car seen from above, 1.7 x 0.9 tiles. Brake lights glow when `braking`. */
-export function renderCar(color: string, braking: boolean): HTMLCanvasElement {
+export function renderCar(color: string, braking: boolean, stripe = false): HTMLCanvasElement {
   const w = Math.round(1.7 * TS), h = Math.round(0.9 * TS);
   const { cv, c } = vehicleCanvas(w, h);
   c.fillStyle = 'rgba(0,0,0,0.28)'; c.beginPath(); c.roundRect(2, 3, w - 2, h - 2, 7); c.fill();
@@ -890,6 +900,7 @@ export function renderCar(color: string, braking: boolean): HTMLCanvasElement {
   c.beginPath(); c.roundRect(w * 0.58, 3, w * 0.16, h - 8, 3); c.fill();
   c.beginPath(); c.roundRect(w * 0.14, 4, w * 0.12, h - 10, 3); c.fill();
   c.fillStyle = shade(color, 18); c.beginPath(); c.roundRect(w * 0.28, 4, w * 0.28, h - 10, 3); c.fill();
+  if (stripe) { c.fillStyle = '#f4f1ea'; c.fillRect(2, h / 2 - 3.5, w - 6, 3); }
   // Headlights and tail lights
   c.fillStyle = '#fff6c8'; c.fillRect(w - 5, 2, 3, 4); c.fillRect(w - 5, h - 8, 3, 4);
   c.fillStyle = braking ? '#ff2a2a' : '#8a1c1c';

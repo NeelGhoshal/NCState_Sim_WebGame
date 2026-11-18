@@ -8,6 +8,7 @@ import { unreadCount } from './phone';
 
 let hud: HTMLElement;
 let prompt: HTMLElement;
+let routeChip: HTMLElement;
 
 function bar(label: string, value: number, cls: string, invert = false) {
   const v = Math.round(value);
@@ -18,7 +19,12 @@ function bar(label: string, value: number, cls: string, invert = false) {
 export function mountHud() {
   hud = el('<div id="hud"></div>');
   prompt = el('<div id="prompt" hidden></div>');
-  root().append(hud, prompt);
+  routeChip = el('<div id="route" hidden></div>');
+  root().append(hud, prompt, routeChip);
+  bus.on('route', (text: string | null) => {
+    routeChip.hidden = !text;
+    if (text) routeChip.innerHTML = esc(text).replace(/\[(\w)\]/g, '<kbd>$1</kbd>');
+  });
   bus.on('state', render);
   bus.on('map', render);
   bus.on('prompt', (text: string | null) => {
@@ -48,8 +54,10 @@ function render() {
     </div>
     <div class="hud-right">
       <span class="chip ${llmStatus().configured ? 'ok' : ''}">${llmStatus().configured ? `AI · ${esc(llmStatus().provider!)}` : 'Scripted'}</span>
+      <button id="goto-btn" class="panel">🎯 Go to <kbd>O</kbd></button>
       <button id="phone-btn" class="panel">📱 Phone <kbd>P</kbd>${unread ? `<span class="badge">${unread}</span>` : ''}</button>
     </div>
     ${map.credit ? `<a class="map-credit" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">${esc(map.credit)}</a>` : ''}`;
   hud.querySelector<HTMLButtonElement>('#phone-btn')!.onclick = () => bus.emit('phone');
+  hud.querySelector<HTMLButtonElement>('#goto-btn')!.onclick = () => bus.emit('goto');
 }

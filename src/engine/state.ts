@@ -58,6 +58,8 @@ export interface GameState {
   setup: PlayerSetup;
   day: number; minute: number; walkFrac: number;
   mapId: string; x: number; y: number;
+  /** Where your car is parked on campus (tile coordinates of its centre). */
+  car: { x: number; y: number; angle: number };
   energy: number; hunger: number; stress: number; money: number; swipes: number; knowledge: number;
   quizScore: number | null;
   classAttended: Record<number, boolean>;
@@ -87,7 +89,7 @@ export function newGame(setup: PlayerSetup): GameState {
     version: 1,
     setup,
     day: 1, minute: START_MINUTE, walkFrac: 0,
-    mapId: START.mapId, x: START.x, y: START.y,
+    mapId: START.mapId, x: START.x, y: START.y, car: { ...START.car },
     energy: 85, hunger: 30, stress: 20, money: b.money, swipes: b.swipes,
     knowledge: 10 + setup.traits.academics,
     quizScore: null,
@@ -112,6 +114,7 @@ export function validTraits(t: Traits): boolean {
 /** Fills fields added since a save was written, so old saves keep loading. */
 export function migrate(s: GameState): GameState {
   s.knownFacts ??= [];
+  s.car ??= { ...START.car };
   s.rumors ??= [];
   for (const a of Object.values(s.agents)) a.heard ??= {};
   for (const def of AGENTS) {
